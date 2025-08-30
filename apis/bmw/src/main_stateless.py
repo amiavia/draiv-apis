@@ -18,7 +18,8 @@ gcloud functions deploy bmw_api_stateless \
     --allow-unauthenticated \
     --entry-point bmw_api \
     --source . \
-    --region us-central1
+    --region europe-west6
+    --timeout 300
 
 Requirements:
 -------------
@@ -28,6 +29,7 @@ functions-framework>=3.0.0
 """
 
 import asyncio
+import traceback
 from flask import Flask, request, jsonify
 import functions_framework
 from bimmer_connected.account import MyBMWAccount
@@ -109,9 +111,29 @@ def bmw_api(request):
             hcaptcha_token=hcaptcha_token
         )
         
-        # ✅ Fetch vehicles from BMW servers
+        # ✅ Fetch vehicles from BMW servers with timeout
         print("🚗 Fetching vehicle data...")
-        asyncio.run(account.get_vehicles())
+        try:
+            await_task = asyncio.wait_for(
+                account.get_vehicles(),
+                timeout=60
+            )
+            asyncio.run(await_task)
+            print(f"✅ Found {len(account.vehicles)} vehicles")
+        except asyncio.TimeoutError:
+            print("⏱️ Vehicle fetch timed out")
+            return jsonify({
+                "error": "BMW servers took too long to respond",
+                "hint": "Please try again. BMW servers may be slow.",
+                "timeout": "60 seconds"
+            }), 504
+        except Exception as e:
+            print(f"❌ Failed to fetch vehicles: {str(e)}")
+            return jsonify({
+                "error": "Failed to fetch vehicles",
+                "details": str(e),
+                "hint": "Check credentials and hCaptcha token"
+            }), 500
         
         # Get specific vehicle by WKN
         vehicle = account.get_vehicle(wkn)
@@ -121,6 +143,8 @@ def bmw_api(request):
                 "error": f"Vehicle with WKN '{wkn}' not found",
                 "available_vehicles": [v.wkn for v in account.vehicles]
             }), 404
+        
+        print(f"🚙 Found vehicle: {vehicle.name} (WKN: {vehicle.wkn})")
         
         # Initialize RemoteServices for remote commands
         remote_services = RemoteServices(vehicle)
@@ -190,10 +214,20 @@ def bmw_api(request):
         elif action == "flash":
             print("💡 Executing remote light flash...")
             try:
-                result = asyncio.run(remote_services.trigger_remote_light_flash())
+                result = asyncio.run(
+                    asyncio.wait_for(
+                        remote_services.trigger_remote_light_flash(),
+                        timeout=30
+                    )
+                )
                 action_result = {
                     "status": result.state.value if result and hasattr(result, "state") else "Unknown",
                     "message": "Light flash command sent successfully"
+                }
+            except asyncio.TimeoutError:
+                action_result = {
+                    "status": "timeout",
+                    "message": "Flash operation timed out"
                 }
             except Exception as e:
                 action_result = {
@@ -205,11 +239,19 @@ def bmw_api(request):
             print("❄️ Executing remote air conditioning activation...")
             try:
                 result = asyncio.run(
-                    remote_services.trigger_remote_service(Services.AIR_CONDITIONING)
+                    asyncio.wait_for(
+                        remote_services.trigger_remote_service(Services.AIR_CONDITIONING),
+                        timeout=60
+                    )
                 )
                 action_result = {
                     "status": result.state.value if result and hasattr(result, "state") else "Unknown",
                     "message": "Air conditioning command sent successfully"
+                }
+            except asyncio.TimeoutError:
+                action_result = {
+                    "status": "timeout",
+                    "message": "AC operation timed out"
                 }
             except Exception as e:
                 action_result = {
@@ -366,18 +408,21 @@ def bmw_api(request):
             "Content-Type": "application/json"
         }
         
+        print(f"✅ Request completed successfully for {vehicle.name}")
         return (jsonify(response_data), 200, headers)
 
     except Exception as e:
         # Handle authentication or other errors
         error_message = str(e)
+        print(f"❌ Error: {error_message}")
+        print(f"Traceback: {traceback.format_exc()}")
         
         # Check for specific error types
         if "authentication" in error_message.lower():
             return jsonify({
                 "error": "Authentication failed",
                 "details": error_message,
-                "hint": "Ensure email, password, and valid hCaptcha token are provided"
+                "hint": "Check email, password, and hCaptcha token validity"
             }), 401
         elif "vehicle" in error_message.lower():
             return jsonify({
@@ -388,7 +433,8 @@ def bmw_api(request):
             return jsonify({
                 "error": "Request processing failed",
                 "details": error_message,
-                "authentication_method": "stateless_hcaptcha"
+                "authentication_method": "stateless_hcaptcha",
+                "traceback": traceback.format_exc() if request.args.get('debug') else None
             }), 500
 
 
