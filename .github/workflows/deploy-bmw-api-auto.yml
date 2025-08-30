@@ -73,8 +73,7 @@ jobs:
           --allow-unauthenticated \
           --memory=256MB \
           --timeout=300s \
-          --max-instances=100 \
-          --service-account=bmw-api-deployer@${{ secrets.GCP_PROJECT_ID || 'miavia-422212' }}.iam.gserviceaccount.com
+          --max-instances=100
     
     - name: Verify deployment
       run: |
