@@ -313,7 +313,7 @@ def bmw_api(request):
                 }
             
         elif action == "mileage":
-            print("📏 Retrieving mileage information..."
+            print("📏 Retrieving mileage information...")
             try:
                 mileage = vehicle.mileage
                 action_result = {
