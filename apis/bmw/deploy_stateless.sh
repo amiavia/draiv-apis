@@ -8,7 +8,7 @@ set -e
 # Configuration
 PROJECT_ID="${GCP_PROJECT:-miavia-422212}"
 FUNCTION_NAME="bmw_api_stateless"
-REGION="${GCP_REGION:-us-central1}"
+REGION="${GCP_REGION:-europe-west6}"
 RUNTIME="python311"
 ENTRY_POINT="bmw_api"
 SOURCE_DIR="./src"
