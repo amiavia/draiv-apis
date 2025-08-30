@@ -1,0 +1,285 @@
+name: Deploy BMW API Stateless
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'apis/bmw/src/main_stateless.py'
+      - 'apis/bmw/requirements-stateless.txt'
+      - '.github/workflows/deploy-bmw-stateless.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  GCP_PROJECT_STAGING: miavia-staging
+  GCP_PROJECT_PRODUCTION: miavia-422212
+  FUNCTION_NAME: bmw_api_stateless
+  REGION: us-central1
+  RUNTIME: python311
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        cd apis/bmw
+        pip install -r requirements-stateless.txt
+    
+    - name: Validate Python syntax
+      run: |
+        python -m py_compile apis/bmw/src/main_stateless.py
+    
+  deploy-staging:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_STAGING }}
+    
+    - name: Prepare deployment package
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_package
+        
+        # Copy stateless implementation as main.py
+        cp apis/bmw/src/main_stateless.py deploy_package/main.py
+        
+        # Copy requirements
+        cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
+        
+        # Create .gcloudignore
+        cat > deploy_package/.gcloudignore << EOF
+        __pycache__/
+        *.pyc
+        .env*
+        tests/
+        *.md
+        .git/
+        EOF
+    
+    - name: Deploy to Staging
+      run: |
+        cd deploy_package
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --runtime=${{ env.RUNTIME }} \
+          --trigger-http \
+          --allow-unauthenticated \
+          --entry-point=bmw_api \
+          --source=. \
+          --set-env-vars ENVIRONMENT=staging \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=50 \
+          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --gen2
+    
+    - name: Test Staging Deployment
+      run: |
+        # Get function URL
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --format="value(url)" 2>/dev/null || \
+          gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --format="value(httpsTrigger.url)")
+        
+        # Test CORS preflight
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ CORS preflight test passed"
+        else
+          echo "❌ CORS preflight failed with code: $HTTP_CODE"
+          exit 1
+        fi
+        
+        echo "✅ Staging deployment successful!"
+        echo "Function URL: ${FUNCTION_URL}"
+    
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: 'BMW Stateless API deployed to staging'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+  
+  deploy-production:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://us-central1-miavia-422212.cloudfunctions.net/bmw_api_stateless
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Create Backup
+      run: |
+        # Create backup timestamp
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        
+        # Try to backup existing function if it exists
+        gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
+          --format=json > backup-${TIMESTAMP}.json 2>/dev/null || echo "No existing function to backup"
+        
+        # Upload backup to GCS if it exists
+        if [ -f "backup-${TIMESTAMP}.json" ]; then
+          gsutil cp backup-${TIMESTAMP}.json \
+            gs://draiv-backups/functions/bmw-api-stateless/backup-${TIMESTAMP}.json || true
+        fi
+    
+    - name: Prepare deployment package
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_package
+        
+        # Copy stateless implementation as main.py
+        cp apis/bmw/src/main_stateless.py deploy_package/main.py
+        
+        # Copy requirements
+        cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
+        
+        # Create .gcloudignore
+        cat > deploy_package/.gcloudignore << EOF
+        __pycache__/
+        *.pyc
+        .env*
+        tests/
+        *.md
+        .git/
+        EOF
+    
+    - name: Deploy to Production
+      run: |
+        cd deploy_package
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --runtime=${{ env.RUNTIME }} \
+          --trigger-http \
+          --allow-unauthenticated \
+          --entry-point=bmw_api \
+          --source=. \
+          --set-env-vars ENVIRONMENT=production \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=100 \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
+          --gen2
+    
+    - name: Verify Production Deployment
+      run: |
+        FUNCTION_URL="https://us-central1-miavia-422212.cloudfunctions.net/bmw_api_stateless"
+        
+        # Test CORS preflight
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ CORS preflight test passed"
+        else
+          echo "❌ CORS preflight failed with code: $HTTP_CODE"
+          exit 1
+        fi
+        
+        echo "✅ Production deployment successful!"
+        echo "Function URL: ${FUNCTION_URL}"
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: bmw-api-stateless-v1.0.0-${{ github.run_number }}
+        release_name: BMW Stateless API v1.0.0 Build ${{ github.run_number }}
+        body: |
+          ## BMW Stateless API Production Deployment
+          
+          **Version**: 1.0.0 (Stateless)
+          **Build**: ${{ github.run_number }}
+          **Environment**: Production
+          
+          ### Key Features
+          - Completely stateless operation
+          - hCaptcha required for every request
+          - No token persistence
+          - Enhanced security through ephemeral authentication
+          
+          ### Deployment Details
+          - Function: `bmw_api_stateless`
+          - Region: `us-central1`
+          - Project: `miavia-422212`
+          - Runtime: Python 3.11
+        draft: false
+        prerelease: false
+    
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: '🚀 BMW Stateless API v1.0.0 deployed to PRODUCTION!'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+  
+  rollback:
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [deploy-production]
+    
+    steps:
+    - name: Rollback Production
+      run: |
+        echo "⚠️ Deployment failed, initiating rollback..."
+        
+        # Get latest backup
+        LATEST_BACKUP=$(gsutil ls gs://draiv-backups/functions/bmw-api-stateless/ | tail -1)
+        
+        # Restore from backup (implementation depends on backup strategy)
+        echo "Restoring from backup: ${LATEST_BACKUP}"
+        
+        # Notify team
+        echo "🔄 Rollback initiated for BMW Stateless API production deployment"

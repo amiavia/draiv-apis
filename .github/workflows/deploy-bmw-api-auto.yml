@@ -1,0 +1,114 @@
+name: Auto Deploy BMW API Stateless
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'apis/bmw/src/main_stateless.py'
+      - 'apis/bmw/requirements-stateless.txt'
+      - '.github/workflows/deploy-bmw-api-auto.yml'
+  workflow_dispatch:
+
+env:
+  FUNCTION_NAME: bmw_api_stateless
+  REGION: us-central1
+  RUNTIME: python311
+
+jobs:
+  deploy:
+    name: Deploy to Google Cloud Functions
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Set GCP Project
+      run: |
+        gcloud config set project ${{ secrets.GCP_PROJECT_ID || 'miavia-422212' }}
+    
+    - name: Prepare deployment files
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_package
+        
+        # Copy stateless implementation as main.py
+        cp apis/bmw/src/main_stateless.py deploy_package/main.py
+        
+        # Copy requirements
+        cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
+        
+        # Create .gcloudignore
+        cat > deploy_package/.gcloudignore << EOF
+        __pycache__/
+        *.pyc
+        .env*
+        tests/
+        *.md
+        .git/
+        .github/
+        EOF
+    
+    - name: Deploy to Google Cloud Functions
+      run: |
+        cd deploy_package
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --gen2 \
+          --runtime=${{ env.RUNTIME }} \
+          --region=${{ secrets.GCP_REGION || env.REGION }} \
+          --source=. \
+          --entry-point=bmw_api \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=100 \
+          --service-account=bmw-api-deployer@${{ secrets.GCP_PROJECT_ID || 'miavia-422212' }}.iam.gserviceaccount.com
+    
+    - name: Verify deployment
+      run: |
+        # Get function URL
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ secrets.GCP_REGION || env.REGION }} \
+          --gen2 \
+          --format="value(serviceConfig.uri)")
+        
+        echo "Function deployed to: $FUNCTION_URL"
+        
+        # Test CORS preflight
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ Deployment successful! CORS test passed."
+        else
+          echo "⚠️ CORS test returned: $HTTP_CODE"
+          exit 1
+        fi
+    
+    - name: Comment on commit
+      uses: actions/github-script@v7
+      if: github.event_name == 'push'
+      with:
+        script: |
+          const region = '${{ secrets.GCP_REGION || env.REGION }}';
+          const project = '${{ secrets.GCP_PROJECT_ID || 'miavia-422212' }}';
+          const functionName = '${{ env.FUNCTION_NAME }}';
+          const url = `https://${region}-${project}.cloudfunctions.net/${functionName}`;
+          
+          github.rest.repos.createCommitComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            commit_sha: context.sha,
+            body: `✅ BMW API Stateless deployed successfully!\n\nFunction URL: ${url}\n\nView logs:\n\`\`\`bash\ngcloud functions logs read ${functionName} --region=${region}\n\`\`\``
+          })
