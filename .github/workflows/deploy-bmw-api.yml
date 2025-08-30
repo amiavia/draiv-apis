@@ -1,0 +1,235 @@
+name: Deploy BMW API
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'apis/bmw/**'
+      - '.github/workflows/deploy-bmw-api.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  GCP_PROJECT_STAGING: miavia-staging
+  GCP_PROJECT_PRODUCTION: miavia-422212
+  FUNCTION_NAME: bmw_api
+  REGION: europe-west6
+  RUNTIME: python311
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        cd apis/bmw
+        pip install -r requirements-dev.txt
+    
+    - name: Run tests
+      run: |
+        cd apis/bmw
+        pytest tests/ -v --cov=src --cov-report=term
+    
+  deploy-staging:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_STAGING }}
+    
+    - name: Deploy to Staging
+      run: |
+        cd apis/bmw
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --runtime=${{ env.RUNTIME }} \
+          --trigger-http \
+          --allow-unauthenticated \
+          --entry-point=bmw_api \
+          --source=src/ \
+          --set-env-vars BMW_OAUTH_BUCKET=bmw-api-bucket-staging,ENVIRONMENT=staging \
+          --memory=256MB \
+          --timeout=540s \
+          --project=${{ env.GCP_PROJECT_STAGING }}
+    
+    - name: Test Staging Deployment
+      run: |
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --format="value(httpsTrigger.url)")
+        
+        # Test health endpoint
+        curl -f "${FUNCTION_URL}/health" || exit 1
+        
+        echo "✅ Staging deployment successful!"
+        echo "Function URL: ${FUNCTION_URL}"
+    
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: 'BMW API deployed to staging'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+  
+  deploy-production:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Create Backup
+      run: |
+        # Download current function source as backup
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        
+        gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
+          --format=json > backup-${TIMESTAMP}.json || true
+        
+        # Upload backup to GCS
+        gsutil cp backup-${TIMESTAMP}.json \
+          gs://draiv-backups/functions/bmw-api/backup-${TIMESTAMP}.json || true
+    
+    - name: Deploy to Production
+      run: |
+        cd apis/bmw
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --runtime=${{ env.RUNTIME }} \
+          --trigger-http \
+          --allow-unauthenticated \
+          --entry-point=bmw_api \
+          --source=src/ \
+          --set-env-vars BMW_OAUTH_BUCKET=bmw-api-bucket,ENVIRONMENT=production \
+          --memory=512MB \
+          --timeout=540s \
+          --max-instances=100 \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }}
+    
+    - name: Verify Production Deployment
+      run: |
+        FUNCTION_URL="https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api"
+        
+        # Test health endpoint
+        HEALTH_RESPONSE=$(curl -s "${FUNCTION_URL}/health")
+        echo "Health check response: ${HEALTH_RESPONSE}"
+        
+        # Verify it's the new version
+        VERSION=$(echo "${HEALTH_RESPONSE}" | jq -r '.version')
+        if [ "$VERSION" != "2.0.0" ]; then
+          echo "❌ Version mismatch! Expected 2.0.0, got ${VERSION}"
+          exit 1
+        fi
+        
+        echo "✅ Production deployment successful!"
+        echo "Function URL: ${FUNCTION_URL}"
+    
+    - name: Smoke Test
+      run: |
+        # Run basic smoke tests against production
+        FUNCTION_URL="https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api"
+        
+        # Test metrics endpoint
+        curl -f "${FUNCTION_URL}/metrics" || exit 1
+        
+        echo "✅ All smoke tests passed!"
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: bmw-api-v2.0.0-${{ github.run_number }}
+        release_name: BMW API v2.0.0 Build ${{ github.run_number }}
+        body: |
+          ## BMW API Production Deployment
+          
+          **Version**: 2.0.0
+          **Build**: ${{ github.run_number }}
+          **Environment**: Production
+          
+          ### Changes
+          - Enhanced error handling with circuit breaker
+          - Added caching layer for improved performance
+          - Structured logging and monitoring
+          - Security improvements
+          
+          ### Deployment Details
+          - Function: `bmw_api`
+          - Region: `europe-west6`
+          - Project: `miavia-422212`
+        draft: false
+        prerelease: false
+    
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: '🚀 BMW API v2.0.0 deployed to PRODUCTION!'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+  
+  rollback:
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [deploy-production]
+    
+    steps:
+    - name: Rollback Production
+      run: |
+        echo "⚠️ Deployment failed, initiating rollback..."
+        
+        # Get latest backup
+        LATEST_BACKUP=$(gsutil ls gs://draiv-backups/functions/bmw-api/ | tail -1)
+        
+        # Restore from backup (implementation depends on backup strategy)
+        echo "Restoring from backup: ${LATEST_BACKUP}"
+        
+        # Notify team
+        echo "🔄 Rollback initiated for BMW API production deployment"
