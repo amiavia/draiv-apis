@@ -74,48 +74,23 @@ jobs:
       with:
         version: 'latest'
     
-    - name: Prepare staging deployment
-      run: |
-        # Create deployment directory
-        mkdir -p deploy_staging
-        
-        # Copy staging implementation as main.py
-        cp apis/bmw/src/staging/main_staging.py deploy_staging/main.py
-        
-        # Copy requirements
-        cp apis/bmw/requirements-stateless.txt deploy_staging/requirements.txt
-        
-        # Create .gcloudignore
-        cat > deploy_staging/.gcloudignore << EOF
-        __pycache__/
-        *.pyc
-        .env*
-        tests/
-        *.md
-        .git/
-        .github/
-        EOF
-        
-        # Add staging marker
-        echo "# Deployed from staging: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> deploy_staging/main.py
-        echo "# Commit: ${{ github.sha }}" >> deploy_staging/main.py
-    
     - name: Deploy Staging Function
       run: |
-        cd deploy_staging
+        # Deploy directly from staging directory - exactly like manual deployment
+        cd apis/bmw/src/staging
         
+        # Copy requirements to staging directory for deployment
+        cp ../../../requirements-stateless.txt requirements.txt
+        
+        # Deploy using the exact same command structure as manual deployment
         gcloud functions deploy ${{ env.FUNCTION_NAME }} \
           --gen2 \
           --runtime=${{ env.RUNTIME }} \
           --region=${{ env.REGION }} \
-          --source=. \
-          --entry-point=bmw_api \
           --trigger-http \
           --allow-unauthenticated \
-          --memory=256MB \
-          --timeout=90s \
-          --max-instances=50 \
-          --set-env-vars="ENVIRONMENT=staging,VERSION=${{ github.sha }}" \
+          --entry-point=bmw_api \
+          --source=. \
           --project=${{ env.GCP_PROJECT }}
     
     - name: Verify Staging Deployment
@@ -139,13 +114,10 @@ jobs:
           echo "⚠️ CORS test returned: $HTTP_CODE"
         fi
     
-    - name: Update staging version file
+    - name: Clean up temporary files
       run: |
-        VERSION=$(date +%Y%m%d.%H%M%S)
-        COMMIT=${{ github.sha }}
-        MESSAGE="${{ github.event.inputs.deploy_message || github.event.head_commit.message }}"
-        
-        echo "${VERSION}|${COMMIT}|$(date -u +"%Y-%m-%d %H:%M:%S")|${MESSAGE}" >> apis/bmw/.staging-version
+        # Clean up the requirements.txt we copied
+        rm -f apis/bmw/src/staging/requirements.txt || true
     
     - name: Comment on commit
       if: github.event_name == 'push'
