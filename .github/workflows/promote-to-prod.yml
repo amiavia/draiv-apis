@@ -41,7 +41,7 @@ jobs:
     
     - name: Check staging file exists
       run: |
-        if [ ! -f "apis/bmw/src/staging/main_staging.py" ]; then
+        if [ ! -f "apis/bmw/src/staging/main.py" ]; then
           echo "❌ No staging file to promote!"
           exit 1
         fi
@@ -141,7 +141,7 @@ jobs:
     - name: Promote staging file to production
       run: |
         # Copy staging to production
-        cp apis/bmw/src/staging/main_staging.py apis/bmw/src/main_stateless.py
+        cp apis/bmw/src/staging/main.py apis/bmw/src/main_stateless.py
         
         # Add promotion marker
         echo "" >> apis/bmw/src/main_stateless.py

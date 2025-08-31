@@ -39,11 +39,11 @@ jobs:
     
     - name: Validate Python syntax
       run: |
-        python -m py_compile apis/bmw/src/staging/main_staging.py
+        python -m py_compile apis/bmw/src/staging/main.py
     
     - name: Check staging file exists
       run: |
-        if [ ! -f "apis/bmw/src/staging/main_staging.py" ]; then
+        if [ ! -f "apis/bmw/src/staging/main.py" ]; then
           echo "❌ Staging file not found!"
           exit 1
         fi
