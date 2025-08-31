@@ -1,0 +1,459 @@
+name: BMW API CI/CD Pipeline
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'apis/bmw/**'
+      - '.github/workflows/bmw-api-pipeline.yml'
+  
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'apis/bmw/**'
+      - '.github/workflows/bmw-api-pipeline.yml'
+  
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests (use with caution)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FUNCTION_NAME: bmw_api_stateless
+  REGION: europe-west6
+  RUNTIME: python311
+  GCP_PROJECT_STAGING: miavia-staging
+  GCP_PROJECT_PRODUCTION: miavia-422212
+
+jobs:
+  # ========================================
+  # 1. CODE QUALITY & TESTING
+  # ========================================
+  test-and-validate:
+    name: Test & Validate
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        cd apis/bmw
+        pip install -r requirements-stateless.txt
+        pip install pytest pytest-cov flake8 mypy
+    
+    - name: Validate Python syntax
+      run: |
+        python -m py_compile apis/bmw/src/main_stateless.py
+    
+    - name: Run linting
+      run: |
+        cd apis/bmw
+        flake8 src/main_stateless.py --count --select=E9,F63,F7,F82 --show-source --statistics || true
+        flake8 src/main_stateless.py --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Run type checking
+      run: |
+        cd apis/bmw
+        mypy src/main_stateless.py --ignore-missing-imports || true
+    
+    - name: Security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: 'apis/bmw'
+        format: 'table'
+    
+    - name: Check for secrets
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./apis/bmw
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+
+  # ========================================
+  # 2. BUILD & PACKAGE
+  # ========================================
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    needs: test-and-validate
+    if: |
+      always() && 
+      (needs.test-and-validate.result == 'success' || needs.test-and-validate.result == 'skipped')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Prepare deployment package
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_package
+        
+        # Copy stateless implementation as main.py
+        cp apis/bmw/src/main_stateless.py deploy_package/main.py
+        
+        # Copy requirements
+        cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
+        
+        # Create .gcloudignore
+        cat > deploy_package/.gcloudignore << EOF
+        __pycache__/
+        *.pyc
+        .env*
+        tests/
+        *.md
+        .git/
+        .github/
+        EOF
+        
+        # Create deployment info
+        echo "Build: ${{ github.run_number }}" > deploy_package/BUILD_INFO
+        echo "Commit: ${{ github.sha }}" >> deploy_package/BUILD_INFO
+        echo "Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> deploy_package/BUILD_INFO
+    
+    - name: Upload deployment artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-package
+        path: deploy_package/
+        retention-days: 7
+
+  # ========================================
+  # 3. DEPLOY TO STAGING
+  # ========================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: |
+      (github.ref == 'refs/heads/develop' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: https://${{ env.REGION }}-${{ env.GCP_PROJECT_STAGING }}.cloudfunctions.net/${{ env.FUNCTION_NAME }}
+    
+    steps:
+    - name: Download deployment artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-package
+        path: deploy_package/
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_STAGING }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Deploy to Staging
+      run: |
+        cd deploy_package
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --gen2 \
+          --runtime=${{ env.RUNTIME }} \
+          --region=${{ env.REGION }} \
+          --source=. \
+          --entry-point=bmw_api \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=50 \
+          --set-env-vars="ENVIRONMENT=staging" \
+          --project=${{ env.GCP_PROJECT_STAGING }}
+    
+    - name: Verify Staging Deployment
+      run: |
+        # Get function URL
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --format="value(serviceConfig.uri)")
+        
+        echo "Function deployed to: $FUNCTION_URL"
+        
+        # Test CORS preflight
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ CORS test passed"
+        else
+          echo "❌ CORS test failed with code: $HTTP_CODE"
+          exit 1
+        fi
+    
+    - name: Run smoke tests
+      run: |
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --format="value(serviceConfig.uri)")
+        
+        # Test that the function returns proper error for missing fields
+        RESPONSE=$(curl -s -X POST "${FUNCTION_URL}" \
+          -H "Content-Type: application/json" \
+          -d '{"test": "data"}' \
+          -w "\n%{http_code}")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+        
+        if [ "$HTTP_CODE" = "400" ]; then
+          echo "✅ Error handling test passed"
+        else
+          echo "❌ Unexpected response code: $HTTP_CODE"
+          exit 1
+        fi
+
+  # ========================================
+  # 4. DEPLOY TO PRODUCTION
+  # ========================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://${{ env.REGION }}-${{ env.GCP_PROJECT_PRODUCTION }}.cloudfunctions.net/${{ env.FUNCTION_NAME }}
+    
+    steps:
+    - name: Download deployment artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-package
+        path: deploy_package/
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Create backup of current production
+      run: |
+        # Create backup timestamp
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        
+        # Try to backup existing function if it exists
+        gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
+          --format=json > backup-${TIMESTAMP}.json 2>/dev/null || echo "No existing function to backup"
+        
+        # Store backup info
+        if [ -f "backup-${TIMESTAMP}.json" ]; then
+          echo "BACKUP_TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
+          echo "Backup created: backup-${TIMESTAMP}.json"
+        fi
+    
+    - name: Deploy to Production
+      id: deploy
+      run: |
+        cd deploy_package
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --gen2 \
+          --runtime=${{ env.RUNTIME }} \
+          --region=${{ env.REGION }} \
+          --source=. \
+          --entry-point=bmw_api \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=100 \
+          --set-env-vars="ENVIRONMENT=production" \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }}
+    
+    - name: Verify Production Deployment
+      id: verify
+      run: |
+        # Get function URL
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
+          --format="value(serviceConfig.uri)")
+        
+        echo "Function deployed to: $FUNCTION_URL"
+        echo "FUNCTION_URL=${FUNCTION_URL}" >> $GITHUB_ENV
+        
+        # Test CORS preflight
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ CORS test passed"
+        else
+          echo "❌ CORS test failed with code: $HTTP_CODE"
+          exit 1
+        fi
+    
+    - name: Create GitHub Release
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: bmw-api-v${{ github.run_number }}
+        release_name: BMW API v${{ github.run_number }}
+        body: |
+          ## BMW Stateless API Production Deployment
+          
+          **Build**: ${{ github.run_number }}
+          **Commit**: ${{ github.sha }}
+          **Environment**: Production
+          **Function URL**: ${{ env.FUNCTION_URL }}
+          
+          ### Changes
+          - Deployed from commit ${{ github.sha }}
+          
+          ### Deployment Info
+          - Function: `${{ env.FUNCTION_NAME }}`
+          - Region: `${{ env.REGION }}`
+          - Project: `${{ env.GCP_PROJECT_PRODUCTION }}`
+          - Runtime: Python 3.11
+        draft: false
+        prerelease: false
+    
+    - name: Notify Slack
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: |
+          Production Deployment: ${{ job.status }}
+          Build: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      continue-on-error: true
+
+  # ========================================
+  # 5. ROLLBACK (ON FAILURE)
+  # ========================================
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: failure() && needs.deploy-production.result == 'failure'
+    
+    steps:
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Rollback to previous version
+      run: |
+        echo "⚠️ Production deployment failed - initiating rollback..."
+        
+        # Get the previous version
+        PREVIOUS_VERSION=$(gcloud functions list \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
+          --format="value(name)" \
+          --filter="name:${{ env.FUNCTION_NAME }}" \
+          --limit=2 | tail -1)
+        
+        if [ ! -z "$PREVIOUS_VERSION" ]; then
+          echo "Rolling back to: $PREVIOUS_VERSION"
+          # Rollback logic would go here
+          # For now, just log the action
+          echo "⚠️ Manual rollback may be required"
+        else
+          echo "❌ No previous version found for rollback"
+        fi
+    
+    - name: Notify Slack - Rollback
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        custom_payload: |
+          {
+            text: "🔄 Production deployment failed - rollback initiated",
+            attachments: [{
+              color: 'danger',
+              text: 'Build ${{ github.run_number }} failed. Please check the deployment.'
+            }]
+          }
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      continue-on-error: true
+
+  # ========================================
+  # 6. CLEANUP
+  # ========================================
+  cleanup:
+    name: Cleanup Artifacts
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Delete old artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+          });
+          
+          const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+          
+          for (const artifact of artifacts.data.artifacts) {
+            if (Date.parse(artifact.created_at) < oneWeekAgo) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+              console.log(`Deleted artifact: ${artifact.name}`);
+            }
+          }

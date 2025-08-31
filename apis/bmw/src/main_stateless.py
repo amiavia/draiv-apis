@@ -30,13 +30,11 @@ functions-framework>=3.0.0
 
 import asyncio
 import traceback
-from flask import Flask, request, jsonify
 import functions_framework
+from flask import jsonify
 from bimmer_connected.account import MyBMWAccount
 from bimmer_connected.api.regions import Regions
 from bimmer_connected.vehicle.remote_services import RemoteServices, Services
-
-app = Flask(__name__)
 
 # 🔹 Main Cloud Function Handler - Stateless Version
 
@@ -438,6 +436,4 @@ def bmw_api(request):
             }), 500
 
 
-# For local testing only
-if __name__ == "__main__":
-    app.run(debug=True, port=8080)
+# For local testing, use: functions-framework --target=bmw_api --debug

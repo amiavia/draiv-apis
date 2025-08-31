@@ -141,7 +141,7 @@ jobs:
     if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     environment:
       name: production
-      url: https://us-central1-miavia-422212.cloudfunctions.net/bmw_api_stateless
+      url: https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_stateless
     
     steps:
     - uses: actions/checkout@v4
@@ -214,7 +214,7 @@ jobs:
     
     - name: Verify Production Deployment
       run: |
-        FUNCTION_URL="https://us-central1-miavia-422212.cloudfunctions.net/bmw_api_stateless"
+        FUNCTION_URL="https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_stateless"
         
         # Test CORS preflight
         HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
@@ -251,7 +251,7 @@ jobs:
           
           ### Deployment Details
           - Function: `bmw_api_stateless`
-          - Region: `us-central1`
+          - Region: `europe-west6`
           - Project: `miavia-422212`
           - Runtime: Python 3.11
         draft: false
