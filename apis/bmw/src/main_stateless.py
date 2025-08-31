@@ -31,7 +31,6 @@ functions-framework>=3.0.0
 import asyncio
 import traceback
 import functions_framework
-from flask import jsonify
 from bimmer_connected.account import MyBMWAccount
 from bimmer_connected.api.regions import Regions
 from bimmer_connected.vehicle.remote_services import RemoteServices, Services
@@ -409,7 +408,7 @@ def bmw_api(request):
         }
         
         print(f"✅ Request completed successfully for {vehicle.name}")
-        return (jsonify(response_data), 200, headers)
+        return (Response(json.dumps(response_data), status=200, mimetype='application/json'), 200, headers)
 
     except Exception as e:
         # Handle authentication or other errors
