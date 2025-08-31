@@ -1,0 +1,5 @@
+# Staging Version Tracker
+# This file tracks the current staging version
+# Format: version|commit|date|description
+
+1.0.0|initial|2025-01-31|Initial staging setup - copy of main_stateless.py

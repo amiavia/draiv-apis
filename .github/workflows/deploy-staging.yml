@@ -1,0 +1,178 @@
+name: Deploy Staging API
+
+on:
+  push:
+    branches: [ develop ]
+    paths:
+      - 'apis/bmw/src/staging/**'
+      - '.github/workflows/deploy-staging.yml'
+  
+  workflow_dispatch:
+    inputs:
+      deploy_message:
+        description: 'Deployment message'
+        required: false
+        default: 'Manual staging deployment'
+
+env:
+  FUNCTION_NAME: bmw_api_staging
+  REGION: europe-west6
+  RUNTIME: python311
+  GCP_PROJECT: miavia-422212
+
+jobs:
+  # ========================================
+  # QUICK VALIDATION
+  # ========================================
+  validate:
+    name: Quick Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Validate Python syntax
+      run: |
+        python -m py_compile apis/bmw/src/staging/main_staging.py
+    
+    - name: Check staging file exists
+      run: |
+        if [ ! -f "apis/bmw/src/staging/main_staging.py" ]; then
+          echo "❌ Staging file not found!"
+          exit 1
+        fi
+        echo "✅ Staging file exists"
+
+  # ========================================
+  # DEPLOY TO STAGING
+  # ========================================
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    needs: validate
+    environment:
+      name: staging
+      url: https://${{ env.REGION }}-${{ env.GCP_PROJECT }}.cloudfunctions.net/${{ env.FUNCTION_NAME }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Prepare staging deployment
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_staging
+        
+        # Copy staging implementation as main.py
+        cp apis/bmw/src/staging/main_staging.py deploy_staging/main.py
+        
+        # Copy requirements
+        cp apis/bmw/requirements-stateless.txt deploy_staging/requirements.txt
+        
+        # Create .gcloudignore
+        cat > deploy_staging/.gcloudignore << EOF
+        __pycache__/
+        *.pyc
+        .env*
+        tests/
+        *.md
+        .git/
+        .github/
+        EOF
+        
+        # Add staging marker
+        echo "# Deployed from staging: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> deploy_staging/main.py
+        echo "# Commit: ${{ github.sha }}" >> deploy_staging/main.py
+    
+    - name: Deploy Staging Function
+      run: |
+        cd deploy_staging
+        
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --gen2 \
+          --runtime=${{ env.RUNTIME }} \
+          --region=${{ env.REGION }} \
+          --source=. \
+          --entry-point=bmw_api \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=50 \
+          --set-env-vars="ENVIRONMENT=staging,VERSION=${{ github.sha }}" \
+          --project=${{ env.GCP_PROJECT }}
+    
+    - name: Verify Staging Deployment
+      run: |
+        # Get function URL
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT }} \
+          --format="value(serviceConfig.uri)")
+        
+        echo "🚀 Staging deployed to: $FUNCTION_URL"
+        echo "STAGING_URL=${FUNCTION_URL}" >> $GITHUB_ENV
+        
+        # Test CORS preflight
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${FUNCTION_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ CORS test passed"
+        else
+          echo "⚠️ CORS test returned: $HTTP_CODE"
+        fi
+    
+    - name: Update staging version file
+      run: |
+        VERSION=$(date +%Y%m%d.%H%M%S)
+        COMMIT=${{ github.sha }}
+        MESSAGE="${{ github.event.inputs.deploy_message || github.event.head_commit.message }}"
+        
+        echo "${VERSION}|${COMMIT}|$(date -u +"%Y-%m-%d %H:%M:%S")|${MESSAGE}" >> apis/bmw/.staging-version
+    
+    - name: Comment on commit
+      if: github.event_name == 'push'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const url = '${{ env.STAGING_URL }}';
+          github.rest.repos.createCommitComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            commit_sha: context.sha,
+            body: `🧪 Staging API deployed!\n\n**URL**: ${url}\n\n**Test with**:\n\`\`\`bash\ncurl -X POST '${url}' \\\\\n  -H 'Content-Type: application/json' \\\\\n  -d '{"email":"test@example.com","password":"test","wkn":"TEST123","hcaptcha":"test-token","action":"status"}'\n\`\`\`\n\n**View logs**:\n\`\`\`bash\ngcloud functions logs read bmw_api_staging --region=europe-west6\n\`\`\``
+          })
+    
+    - name: Output deployment info
+      run: |
+        echo "========================================="
+        echo "🧪 STAGING DEPLOYMENT SUCCESSFUL"
+        echo "========================================="
+        echo "URL: ${{ env.STAGING_URL }}"
+        echo "Function: ${{ env.FUNCTION_NAME }}"
+        echo "Region: ${{ env.REGION }}"
+        echo "Project: ${{ env.GCP_PROJECT }}"
+        echo "========================================="
+        echo ""
+        echo "Use this URL in preview--draiv.lovable.app:"
+        echo "${{ env.STAGING_URL }}"
+        echo ""
+        echo "To promote to production:"
+        echo "gh workflow run promote-to-prod.yml"

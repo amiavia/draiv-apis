@@ -1,0 +1,281 @@
+name: Promote Staging to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_promotion:
+        description: 'Type "PROMOTE" to confirm promotion to production'
+        required: true
+        default: ''
+      promotion_message:
+        description: 'Promotion message/reason'
+        required: true
+        default: 'Promoting tested staging changes to production'
+
+env:
+  STAGING_FUNCTION: bmw_api_staging
+  PRODUCTION_FUNCTION: bmw_api_stateless
+  REGION: europe-west6
+  RUNTIME: python311
+  GCP_PROJECT: miavia-422212
+
+jobs:
+  # ========================================
+  # VALIDATE PROMOTION
+  # ========================================
+  validate-promotion:
+    name: Validate Promotion Request
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check confirmation
+      run: |
+        if [ "${{ github.event.inputs.confirm_promotion }}" != "PROMOTE" ]; then
+          echo "❌ Promotion not confirmed. You must type 'PROMOTE' to continue."
+          exit 1
+        fi
+        echo "✅ Promotion confirmed"
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Check staging file exists
+      run: |
+        if [ ! -f "apis/bmw/src/staging/main_staging.py" ]; then
+          echo "❌ No staging file to promote!"
+          exit 1
+        fi
+        echo "✅ Staging file exists and ready for promotion"
+
+  # ========================================
+  # TEST STAGING BEFORE PROMOTION
+  # ========================================
+  test-staging:
+    name: Test Staging Function
+    runs-on: ubuntu-latest
+    needs: validate-promotion
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Test staging function
+      run: |
+        # Get staging function URL
+        STAGING_URL=$(gcloud functions describe ${{ env.STAGING_FUNCTION }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT }} \
+          --format="value(serviceConfig.uri)")
+        
+        echo "Testing staging function at: $STAGING_URL"
+        
+        # Test CORS
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${STAGING_URL}")
+        
+        if [ "$HTTP_CODE" != "204" ]; then
+          echo "❌ Staging function CORS test failed with code: $HTTP_CODE"
+          exit 1
+        fi
+        
+        echo "✅ Staging function is healthy"
+
+  # ========================================
+  # BACKUP CURRENT PRODUCTION
+  # ========================================
+  backup-production:
+    name: Backup Current Production
+    runs-on: ubuntu-latest
+    needs: test-staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Create production backup
+      run: |
+        BACKUP_DIR="backups/$(date +%Y%m%d_%H%M%S)"
+        mkdir -p $BACKUP_DIR
+        
+        # Backup current production file
+        if [ -f "apis/bmw/src/main_stateless.py" ]; then
+          cp apis/bmw/src/main_stateless.py $BACKUP_DIR/main_stateless.py.backup
+          echo "✅ Production backed up to $BACKUP_DIR"
+        fi
+        
+        # Save backup path
+        echo "BACKUP_PATH=${BACKUP_DIR}" >> $GITHUB_ENV
+    
+    - name: Upload backup artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: production-backup-${{ github.run_number }}
+        path: backups/
+        retention-days: 30
+
+  # ========================================
+  # PROMOTE STAGING TO PRODUCTION
+  # ========================================
+  promote:
+    name: Promote to Production
+    runs-on: ubuntu-latest
+    needs: backup-production
+    environment:
+      name: production
+      url: https://${{ env.REGION }}-${{ env.GCP_PROJECT }}.cloudfunctions.net/${{ env.PRODUCTION_FUNCTION }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Promote staging file to production
+      run: |
+        # Copy staging to production
+        cp apis/bmw/src/staging/main_staging.py apis/bmw/src/main_stateless.py
+        
+        # Add promotion marker
+        echo "" >> apis/bmw/src/main_stateless.py
+        echo "# PROMOTED FROM STAGING: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> apis/bmw/src/main_stateless.py
+        echo "# Promotion reason: ${{ github.event.inputs.promotion_message }}" >> apis/bmw/src/main_stateless.py
+        echo "# Promoted by: ${{ github.actor }}" >> apis/bmw/src/main_stateless.py
+        
+        echo "✅ Staging promoted to production file"
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        version: 'latest'
+    
+    - name: Deploy to Production
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_production
+        
+        # Copy production implementation
+        cp apis/bmw/src/main_stateless.py deploy_production/main.py
+        
+        # Copy requirements
+        cp apis/bmw/requirements-stateless.txt deploy_production/requirements.txt
+        
+        # Create .gcloudignore
+        cat > deploy_production/.gcloudignore << EOF
+        __pycache__/
+        *.pyc
+        .env*
+        tests/
+        *.md
+        .git/
+        .github/
+        EOF
+        
+        cd deploy_production
+        
+        # Deploy to production
+        gcloud functions deploy ${{ env.PRODUCTION_FUNCTION }} \
+          --gen2 \
+          --runtime=${{ env.RUNTIME }} \
+          --region=${{ env.REGION }} \
+          --source=. \
+          --entry-point=bmw_api \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory=256MB \
+          --timeout=90s \
+          --max-instances=100 \
+          --set-env-vars="ENVIRONMENT=production,PROMOTED_AT=$(date -u +%Y%m%d_%H%M%S)" \
+          --project=${{ env.GCP_PROJECT }}
+    
+    - name: Verify Production Deployment
+      run: |
+        # Get production function URL
+        PROD_URL=$(gcloud functions describe ${{ env.PRODUCTION_FUNCTION }} \
+          --region=${{ env.REGION }} \
+          --gen2 \
+          --project=${{ env.GCP_PROJECT }} \
+          --format="value(serviceConfig.uri)")
+        
+        echo "Production URL: $PROD_URL"
+        
+        # Test CORS
+        HTTP_CODE=$(curl -s -X OPTIONS -o /dev/null -w "%{http_code}" "${PROD_URL}")
+        
+        if [ "$HTTP_CODE" = "204" ]; then
+          echo "✅ Production deployment successful!"
+        else
+          echo "❌ Production CORS test failed with code: $HTTP_CODE"
+          exit 1
+        fi
+    
+    - name: Commit promotion changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        git add apis/bmw/src/main_stateless.py
+        git commit -m "🚀 Promoted staging to production
+        
+        Promotion reason: ${{ github.event.inputs.promotion_message }}
+        Promoted by: ${{ github.actor }}
+        Staging commit: ${{ github.sha }}
+        
+        [skip ci]"
+        
+        git push origin ${{ github.ref }}
+    
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: promoted-v${{ github.run_number }}
+        release_name: Production Promotion v${{ github.run_number }}
+        body: |
+          ## 🚀 Staging Promoted to Production
+          
+          **Promoted by**: ${{ github.actor }}
+          **Reason**: ${{ github.event.inputs.promotion_message }}
+          **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ### URLs
+          - **Production**: https://${{ env.REGION }}-${{ env.GCP_PROJECT }}.cloudfunctions.net/${{ env.PRODUCTION_FUNCTION }}
+          - **Staging**: https://${{ env.REGION }}-${{ env.GCP_PROJECT }}.cloudfunctions.net/${{ env.STAGING_FUNCTION }}
+          
+          ### Changes
+          Staging changes have been promoted to production.
+        draft: false
+        prerelease: false
+
+  # ========================================
+  # ROLLBACK IF FAILED
+  # ========================================
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: promote
+    if: failure()
+    
+    steps:
+    - name: Notify of rollback
+      run: |
+        echo "❌ PROMOTION FAILED - MANUAL ROLLBACK MAY BE REQUIRED"
+        echo "Check backup artifact: production-backup-${{ github.run_number }}"
+        echo ""
+        echo "To rollback manually:"
+        echo "1. Download the backup artifact"
+        echo "2. Restore apis/bmw/src/main_stateless.py from backup"
+        echo "3. Run the production deployment workflow"
