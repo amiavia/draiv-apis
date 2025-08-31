@@ -103,8 +103,8 @@ CircuitBreaker(
 ## Timeline
 - **Phase 1** (Completed): Repository setup and code migration
 - **Phase 2** (Completed): Documentation and CI/CD
-- **Phase 3** (Next): Testing framework implementation
-- **Phase 4** (Future): Production deployment
+- **Phase 3** (Completed - Aug 31, 2025): Production & Staging deployment
+- **Phase 4** (Next): Testing framework implementation
 
 ## Risk Mitigation
 - Comprehensive testing before deployment
@@ -130,7 +130,8 @@ CircuitBreaker(
 - [ ] Unit test implementation
 - [ ] Integration test suite
 - [ ] Load testing
-- [ ] Production deployment
+- [x] ~~Production deployment~~ ✅ Deployed to production (bmw_api)
+- [x] ~~Staging deployment~~ ✅ Deployed to staging (bmw_api_staging)
 - [ ] Monitoring dashboard setup
 
 ## Lessons Learned
@@ -138,6 +139,9 @@ CircuitBreaker(
 2. **Circuit breaker pattern** essential for external API reliability
 3. **Structured logging** crucial for debugging production issues
 4. **Comprehensive documentation** accelerates onboarding
+5. **httpx compatibility** - Version pinning (httpx==0.24.1) required for bimmer-connected
+6. **IAM permissions** - Cloud Functions deployment may need manual IAM policy for public access
+7. **Simple deployment approach** - Using `--source .` directly works better than complex packaging
 
 ## Next Steps
 1. Implement comprehensive test suite
