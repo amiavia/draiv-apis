@@ -139,10 +139,10 @@ def bmw_api(request):
         if not vehicle:
             return jsonify({
                 "error": f"Vehicle with WKN '{wkn}' not found",
-                "available_vehicles": [v.wkn for v in account.vehicles]
+                "available_vehicles": [v.vin for v in account.vehicles]
             }), 404
         
-        print(f"🚙 Found vehicle: {vehicle.name} (WKN: {vehicle.wkn})")
+        print(f"🚙 Found vehicle: {vehicle.name} (WKN: {wkn})")
         
         # Initialize RemoteServices for remote commands
         remote_services = RemoteServices(vehicle)
@@ -152,7 +152,7 @@ def bmw_api(request):
             "brand": vehicle.brand,
             "vehicle_name": vehicle.name,
             "vin": vehicle.vin,
-            "wkn": vehicle.wkn,
+            "wkn": wkn,
             "model": getattr(vehicle, "model", "Unknown"),
         }
 

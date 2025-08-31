@@ -33,7 +33,6 @@ env:
   FUNCTION_NAME: bmw_api_stateless
   REGION: europe-west6
   RUNTIME: python311
-  GCP_PROJECT_STAGING: miavia-staging
   GCP_PROJECT_PRODUCTION: miavia-422212
 
 jobs:
@@ -147,7 +146,7 @@ jobs:
         retention-days: 7
 
   # ========================================
-  # 3. DEPLOY TO STAGING
+  # 3. DEPLOY TO STAGING (Using Production Project)
   # ========================================
   deploy-staging:
     name: Deploy to Staging
@@ -158,7 +157,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
     environment:
       name: staging
-      url: https://${{ env.REGION }}-${{ env.GCP_PROJECT_STAGING }}.cloudfunctions.net/${{ env.FUNCTION_NAME }}
+      url: https://${{ env.REGION }}-${{ env.GCP_PROJECT_PRODUCTION }}.cloudfunctions.net/${{ env.FUNCTION_NAME }}_staging
     
     steps:
     - name: Download deployment artifact
@@ -170,7 +169,7 @@ jobs:
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
-        credentials_json: ${{ secrets.GCP_SA_KEY_STAGING }}
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
     
     - name: Setup Google Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
@@ -181,7 +180,8 @@ jobs:
       run: |
         cd deploy_package
         
-        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+        # Deploy with _staging suffix to differentiate from production
+        gcloud functions deploy ${{ env.FUNCTION_NAME }}_staging \
           --gen2 \
           --runtime=${{ env.RUNTIME }} \
           --region=${{ env.REGION }} \
@@ -193,15 +193,15 @@ jobs:
           --timeout=90s \
           --max-instances=50 \
           --set-env-vars="ENVIRONMENT=staging" \
-          --project=${{ env.GCP_PROJECT_STAGING }}
+          --project=${{ env.GCP_PROJECT_PRODUCTION }}
     
     - name: Verify Staging Deployment
       run: |
         # Get function URL
-        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }}_staging \
           --region=${{ env.REGION }} \
           --gen2 \
-          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
           --format="value(serviceConfig.uri)")
         
         echo "Function deployed to: $FUNCTION_URL"
@@ -218,10 +218,10 @@ jobs:
     
     - name: Run smoke tests
       run: |
-        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }}_staging \
           --region=${{ env.REGION }} \
           --gen2 \
-          --project=${{ env.GCP_PROJECT_STAGING }} \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }} \
           --format="value(serviceConfig.uri)")
         
         # Test that the function returns proper error for missing fields
@@ -432,7 +432,7 @@ jobs:
     name: Cleanup Artifacts
     runs-on: ubuntu-latest
     needs: [deploy-staging, deploy-production]
-    if: always()
+    if: always() && !cancelled()
     
     steps:
     - name: Delete old artifacts
