@@ -80,7 +80,7 @@ jobs:
         cd apis/bmw/src/staging
         
         # Copy requirements to staging directory for deployment
-        cp ../../../requirements-stateless.txt requirements.txt
+        cp ../../requirements-stateless.txt requirements.txt
         
         # Deploy using the exact same command structure as manual deployment
         gcloud functions deploy ${{ env.FUNCTION_NAME }} \
