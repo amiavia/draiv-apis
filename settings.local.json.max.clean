@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(chmod:*)",
+      "Read(/Users/antonsteininger/**)",
+      "Read(/Users/antonsteininger/draiv-agents/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-agents/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-agents/PRPs/templates/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-ui/.claude/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-agents/.claude/**)",
+      "Read(/Users/antonsteininger/draiv-agents/DRAIV-Native/**)",
+      "Read(/Users/antonsteininger/draiv-apis/**)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(git pull:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh workflow view:*)",
+      "Bash(gh run watch:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh api:*)",
+      "Bash(gh workflow:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npm run test:supabase:*)",
+      "Bash(npm run verify:assets:*)",
+      "Bash(npm run test:assets:*)",
+      "Bash(npm run build:*)",
+      "Bash(./scripts/start-dev.sh:*)",
+      "Bash(./scripts/setup-local.sh:*)",
+      "Bash(curl:*)",
+      "Bash(ssh:*)",
+      "WebFetch(domain:europe-west6-miavia-422212.cloudfunctions.net)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_click"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "additionalDirectories": [
+    "/Users/antonsteininger/draiv-agents",
+    "/Users/antonsteininger/draiv-apis",
+    "/Users/antonsteininger/draiv-ui"
+  ],
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "permissions": {
+    "allow": [
+      // Tree and file operations
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(chmod:*)",
+      
+      // Read permissions for all draiv projects
+      "Read(/Users/antonsteininger/**)",
+      "Read(/Users/antonsteininger/draiv-agents/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-agents/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-agents/PRPs/templates/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-ui/.claude/**)",
+      "Read(/Users/antonsteininger/draiv-agents/draiv-agents/.claude/**)",
+      "Read(/Users/antonsteininger/draiv-agents/DRAIV-Native/**)",
+      "Read(/Users/antonsteininger/draiv-apis/**)",
+      
+      // Git operations
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(git pull:*)",
+      
+      // GitHub CLI operations
+      "Bash(gh repo view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh workflow view:*)",
+      "Bash(gh run watch:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh api:*)",
+      "Bash(gh workflow:*)",
+      
+      // Programming language runtimes
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      
+      // Package managers and build tools
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npm run test:supabase:*)",
+      "Bash(npm run verify:assets:*)",
+      "Bash(npm run test:assets:*)",
+      "Bash(npm run build:*)",
+      
+      // Scripts
+      "Bash(./scripts/start-dev.sh:*)",
+      "Bash(./scripts/setup-local.sh:*)",
+      
+      // Network operations
+      "Bash(curl:*)",
+      "Bash(ssh:*)",
+      
+      // Web operations
+      "WebFetch(domain:europe-west6-miavia-422212.cloudfunctions.net)",
+      
+      // MCP Playwright browser automation
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_click"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  
+  // Additional configuration options from draiv-agents
+  "additionalDirectories": [
+    "/Users/antonsteininger/draiv-agents",
+    "/Users/antonsteininger/draiv-apis",
+    "/Users/antonsteininger/draiv-ui"
+  ],
+  
+  // MCP server configuration
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}

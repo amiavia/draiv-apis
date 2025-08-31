@@ -16,7 +16,7 @@ env:
   STAGING_FUNCTION: bmw_api_staging
   PRODUCTION_FUNCTION: bmw_api_stateless
   REGION: europe-west6
-  RUNTIME: python311
+  RUNTIME: python310
   GCP_PROJECT: miavia-422212
 
 jobs:

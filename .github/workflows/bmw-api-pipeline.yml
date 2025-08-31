@@ -32,7 +32,7 @@ on:
 env:
   FUNCTION_NAME: bmw_api_stateless
   REGION: europe-west6
-  RUNTIME: python311
+  RUNTIME: python310
   GCP_PROJECT_PRODUCTION: miavia-422212
 
 jobs:
