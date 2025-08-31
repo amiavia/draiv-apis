@@ -99,9 +99,11 @@ def bmw_api(request):
 
     # ✅ ALWAYS authenticate fresh with hCaptcha (no token storage/reuse)
     print(f"🔑 Stateless authentication for {provided_email} with hCaptcha...")
+    print(f"📝 hCaptcha token (first 50 chars): {hcaptcha_token[:50]}...")
     
     try:
         # Create new account instance with hCaptcha for fresh authentication
+        # Note: REST_OF_WORLD is typically used for European accounts
         account = MyBMWAccount(
             provided_email, 
             provided_password, 
@@ -416,7 +418,19 @@ def bmw_api(request):
         print(f"Traceback: {traceback.format_exc()}")
         
         # Check for specific error types
-        if "authentication" in error_message.lower():
+        if "invalid_client" in error_message.lower():
+            return jsonify({
+                "error": "Authentication failed", 
+                "details": error_message,
+                "hint": "hCaptcha token may be expired or already used. Generate a new token.",
+                "possible_causes": [
+                    "hCaptcha token expired (they expire after 2 minutes)",
+                    "hCaptcha token already used (they're single-use)",
+                    "Wrong region selected (try NORTH_AMERICA or CHINA)",
+                    "Invalid credentials"
+                ]
+            }), 401
+        elif "authentication" in error_message.lower() or "401" in error_message:
             return jsonify({
                 "error": "Authentication failed",
                 "details": error_message,
