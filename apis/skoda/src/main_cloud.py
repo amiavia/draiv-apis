@@ -329,7 +329,7 @@ def skoda_api_stateless(request):
         # Close connection if available
         if myskoda:
             try:
-                await myskoda.disconnect()
+                loop.run_until_complete(myskoda.disconnect())
             except:
                 pass
                 
