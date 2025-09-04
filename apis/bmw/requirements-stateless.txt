@@ -1,13 +1,10 @@
 # BMW API Stateless Requirements
-# Minimal dependencies for stateless BMW Connected Drive API
+# Direct BMW API implementation (bypasses bimmer-connected)
 
 # Core dependencies
-bimmer-connected==0.16.4
 flask==3.0.3
 functions-framework==3.8.2
 
-# Async support (required by bimmer-connected)
+# Async support for direct API calls
 aiohttp==3.10.10
-
-# Fix httpx compatibility issue with bimmer-connected
-httpx==0.24.1
+asyncio==3.4.3
