@@ -250,21 +250,17 @@ def bmw_api(request):
         
         if not auth_result.get('success'):
             error_msg = auth_result.get('error', 'Unknown error')
+            status_code = auth_result.get('status', 'unknown')
             print(f"❌ Authentication failed: {error_msg}")
             
-            # Check for specific error patterns
-            if "invalid_client" in str(error_msg).lower():
-                return jsonify({
-                    "error": "Authentication failed",
-                    "details": "BMW rejected the credentials. This might be due to an expired or already-used hCaptcha token.",
-                    "hint": "Please generate a fresh hCaptcha token (they expire in 2 minutes)",
-                    "implementation": "direct_api"
-                }), 401
-            
+            # Return raw BMW error response for debugging
             return jsonify({
-                "error": "Authentication failed",
-                "details": str(error_msg),
-                "implementation": "direct_api"
+                "error": "BMW Authentication Failed",
+                "bmw_raw_error": str(error_msg),
+                "bmw_status_code": status_code,
+                "auth_result_full": auth_result,
+                "implementation": "direct_api",
+                "debug_info": "Raw BMW API response for troubleshooting"
             }), 401
         
         access_token = auth_result['access_token']
