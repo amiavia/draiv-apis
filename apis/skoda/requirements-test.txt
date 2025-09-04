@@ -1,0 +1,129 @@
+# Test dependencies for Skoda Connect API
+
+# Core testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+pytest-timeout>=2.1.0
+pytest-xdist>=3.3.0
+
+# HTTP testing
+httpx>=0.24.0
+requests-mock>=1.11.0
+responses>=0.23.0
+
+# FastAPI testing
+fastapi[all]>=0.100.0
+httpx>=0.24.0
+
+# Async testing support
+asyncio-mqtt>=0.13.0
+aioresponses>=0.7.4
+
+# Mocking and fixtures
+factory-boy>=3.3.0
+faker>=19.0.0
+freezegun>=1.2.2
+
+# Database testing
+pytest-postgresql>=5.0.0
+sqlalchemy>=2.0.0
+alembic>=1.11.0
+
+# Performance testing
+pytest-benchmark>=4.0.0
+memory-profiler>=0.61.0
+
+# Security testing
+bandit>=1.7.5
+safety>=2.3.0
+
+# Code quality
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.5.0
+
+# Coverage reporting
+coverage[toml]>=7.2.0
+coverage-badge>=1.1.0
+
+# Test utilities
+pydantic>=2.0.0
+python-multipart>=0.0.6
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-decouple>=3.8.0
+
+# Cloud testing
+google-cloud-storage>=2.10.0
+google-auth>=2.22.0
+
+# Time and date testing
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Logging testing
+structlog>=23.1.0
+colorama>=0.4.6
+
+# Encryption testing
+cryptography>=41.0.0
+pycryptodome>=3.18.0
+
+# Environment testing
+python-dotenv>=1.0.0
+
+# Development utilities
+ipdb>=0.13.13
+rich>=13.4.0
+typer>=0.9.0
+
+# MySkoda library (for testing against real API structure)
+# Note: This would be the actual MySkoda library in real implementation
+# myskoda>=1.0.0
+
+# Additional testing utilities
+jsonschema>=4.19.0
+xmltodict>=0.13.0
+pyyaml>=6.0.1
+toml>=0.10.2
+
+# Parallel test execution
+pytest-xdist[psutil]>=3.3.0
+
+# Test reporting
+pytest-html>=3.2.0
+pytest-json-report>=1.5.0
+allure-pytest>=2.13.2
+
+# Performance profiling
+py-spy>=0.3.14
+line-profiler>=4.0.2
+
+# Memory testing
+pympler>=0.9
+psutil>=5.9.0
+
+# Mock servers for integration testing
+wiremock>=2.1.0
+moto[server]>=4.2.0
+
+# Circuit breaker testing
+pybreaker>=0.7.0
+
+# Rate limiting testing
+slowapi>=0.1.9
+limits>=3.5.0
+
+# Retry testing
+tenacity>=8.2.2
+backoff>=2.2.1
+
+# Validation testing
+cerberus>=1.3.4
+schema>=0.7.5
+
+# Time-based testing
+time-machine>=2.12.0
