@@ -10,7 +10,7 @@ set -e
 PROJECT_ID="${GCP_PROJECT:-miavia-422212}"
 FUNCTION_NAME="skoda_api_stateless"
 REGION="${GCP_REGION:-europe-west6}"
-RUNTIME="python310"
+RUNTIME="python312"
 ENTRY_POINT="skoda_api"
 SOURCE_DIR="./src"
 TIMEOUT="90s"

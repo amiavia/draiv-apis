@@ -23,7 +23,7 @@ env:
   GCP_PROJECT_PRODUCTION: miavia-422212
   FUNCTION_NAME: skoda_api_stateless
   REGION: europe-west6
-  RUNTIME: python310
+  RUNTIME: python312
 
 jobs:
   validate:
