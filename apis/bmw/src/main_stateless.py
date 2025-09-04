@@ -14,6 +14,9 @@ import functions_framework
 from flask import jsonify, Response
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
+import secrets
+import base64
+import re
 
 # BMW API Configuration
 BMW_BASE_URL = "https://customer.bmwgroup.com"
@@ -67,7 +70,6 @@ def generate_user_agent() -> str:
     Generate x-user-agent exactly as PR #743 does
     Replicate bimmer_connected PR #743 user agent generation
     """
-    import re
     
     # Get system UUID using PR #743 method
     system_uuid = _get_system_uuid()
@@ -124,10 +126,8 @@ async def get_oauth_settings() -> Dict[str, Any]:
             else:
                 raise Exception(f"Failed to get OAuth settings: {response.status}")
 
-def generate_pkce_pair() -> tuple[str, str]:
+def generate_pkce_pair() -> tuple:
     """Generate PKCE code verifier and challenge"""
-    import secrets
-    import base64
     
     # Generate random code verifier
     code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
