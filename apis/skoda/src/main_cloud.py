@@ -48,7 +48,6 @@ logger = logging.getLogger(__name__)
 # Import MySkoda library
 try:
     from myskoda import MySkoda
-    from myskoda.models.info import InfoStatus
     MYSKODA_AVAILABLE = True
     MYSKODA_IMPORT_ERROR = None
     logger.info("MySkoda library successfully imported")
