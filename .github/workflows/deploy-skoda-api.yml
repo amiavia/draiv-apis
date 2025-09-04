@@ -108,6 +108,17 @@ jobs:
           --project=${{ env.GCP_PROJECT_STAGING }} \
           --gen2
     
+    - name: Fix Staging IAM Permissions
+      run: |
+        # Set IAM policy to allow public access
+        gcloud functions add-iam-policy-binding ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --member="allUsers" \
+          --role="roles/cloudfunctions.invoker" \
+          --project=${{ env.GCP_PROJECT_STAGING }}
+        
+        echo "✅ Staging IAM permissions configured"
+    
     - name: Test Staging Deployment
       run: |
         # Get function URL
@@ -241,6 +252,17 @@ jobs:
           --max-instances=100 \
           --project=${{ env.GCP_PROJECT_PRODUCTION }} \
           --gen2
+    
+    - name: Fix IAM Permissions
+      run: |
+        # Set IAM policy to allow public access
+        gcloud functions add-iam-policy-binding ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --member="allUsers" \
+          --role="roles/cloudfunctions.invoker" \
+          --project=${{ env.GCP_PROJECT_PRODUCTION }}
+        
+        echo "✅ IAM permissions configured for public access"
     
     - name: Verify Production Deployment
       run: |
