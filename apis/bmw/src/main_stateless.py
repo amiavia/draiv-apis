@@ -55,11 +55,18 @@ async def authenticate_bmw(email: str, password: str, hcaptcha_token: str) -> Di
     Returns:
         Dict with access_token and refresh_token or error
     """
+    # Generate unique session ID for BMW
+    import uuid
+    session_id = str(uuid.uuid4())
+    
     headers = {
         'x-user-agent': generate_user_agent(),
-        'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)',
+        'user-agent': 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
         'content-type': 'application/x-www-form-urlencoded',
-        'accept': 'application/json'
+        'accept': 'application/json',
+        'ocp-apim-subscription-key': '4f1c85a3-758f-a37d-bbb6-f8704494acfa',  # REST_OF_WORLD key
+        'bmw-session-id': session_id,
+        'hcaptchatoken': hcaptcha_token
     }
     
     auth_data = {
@@ -69,7 +76,7 @@ async def authenticate_bmw(email: str, password: str, hcaptcha_token: str) -> Di
         'response_type': 'token',
         'redirect_uri': 'com.bmw.connected://oauth',
         'scope': 'authenticate_user vehicle_data remote_services',
-        'hcaptcha_token': hcaptcha_token
+        'state': 'bmw_oauth_state'
     }
     
     async with aiohttp.ClientSession() as session:
