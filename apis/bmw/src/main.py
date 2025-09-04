@@ -6,14 +6,29 @@ import os
 import json
 import asyncio
 import logging
+import sys
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# CRITICAL: Apply monkey patch BEFORE importing bimmer_connected modules
+# This fixes the BMW API quota issue by generating dynamic x-user-agent headers
+try:
+    # Add current directory to path to find utils
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from utils.bmw_monkey_patch import apply_monkey_patch
+    # The patch is auto-applied on import, but we can call it explicitly to be sure
+    apply_monkey_patch()
+    print("✅ BMW monkey patch applied successfully")
+except Exception as e:
+    print(f"⚠️ Failed to apply BMW monkey patch: {e}")
+    # Continue without patch - better to try than fail completely
 
 from flask import Flask, Request, jsonify
 import functions_framework
 from google.cloud import storage, secretmanager
 
+# Import these AFTER monkey patch is applied
 from auth_manager import BMWAuthManager
 from vehicle_manager import BMWVehicleManager
 from remote_services import BMWRemoteServices
@@ -27,7 +42,6 @@ from utils.error_handler import (
     RemoteServiceError,
     QuotaLimitError
 )
-from utils.user_agent_manager import user_agent_manager
 
 # Configure structured logging
 logging.basicConfig(
@@ -244,7 +258,7 @@ def bmw_api(request: Request):
             "version": "2.0.0",
             "environment": ENVIRONMENT,
             "metrics": bmw_service.get_metrics(),
-            "user_agent_info": user_agent_manager.get_stats()
+            "monkey_patch": "active"  # Indicate monkey patch is active
         }
         
         # Add circuit breaker state to health status

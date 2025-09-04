@@ -38,6 +38,18 @@ import sys
 # Add parent directory to path to import utils
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# CRITICAL: Apply monkey patch BEFORE importing bimmer_connected modules
+# This fixes the BMW API quota issue by generating dynamic x-user-agent headers
+try:
+    from utils.bmw_monkey_patch import apply_monkey_patch
+    # The patch is auto-applied on import, but we can call it explicitly to be sure
+    apply_monkey_patch()
+    print("✅ BMW monkey patch applied successfully")
+except Exception as e:
+    print(f"⚠️ Failed to apply BMW monkey patch: {e}")
+    # Continue without patch - better to try than fail completely
+
+# NOW import bimmer_connected modules (after patch is applied)
 import functions_framework
 from flask import jsonify, Response
 from bimmer_connected.account import MyBMWAccount
@@ -170,22 +182,17 @@ def bmw_api(request):
     print(f"📝 hCaptcha token (first 50 chars): {hcaptcha_token[:50]}...")
     
     try:
-        # Get dynamic user agent headers to avoid quota limits
-        user_agent_headers = user_agent_manager.get_headers()
-        print(f"🔧 Using dynamic user agent: {user_agent_headers.get('x-user-agent', 'default')}")
-        
         # Create new account instance with hCaptcha for fresh authentication
         # Note: REST_OF_WORLD is typically used for European accounts
+        # The monkey patch has already set the dynamic x-user-agent internally
+        print(f"🔧 Creating MyBMWAccount with monkey-patched dynamic user agent")
+        
         account = MyBMWAccount(
             provided_email, 
             provided_password, 
             Regions.REST_OF_WORLD, 
             hcaptcha_token=hcaptcha_token
         )
-        
-        # Apply dynamic user agent to avoid quota limits
-        if hasattr(account, '_session') and account._session and user_agent_headers:
-            account._session.headers.update(user_agent_headers)
         
         # ✅ Fetch vehicles from BMW servers with timeout
         print("🚗 Fetching vehicle data...")

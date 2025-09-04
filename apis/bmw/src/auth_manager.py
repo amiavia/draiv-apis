@@ -15,7 +15,6 @@ from bimmer_connected.api.regions import Regions
 from bimmer_connected.cli import load_oauth_store_from_file, store_oauth_store_to_file
 
 from utils.error_handler import AuthenticationError, BMWAPIError, QuotaLimitError
-from utils.user_agent_manager import user_agent_manager
 
 logger = logging.getLogger(__name__)
 
@@ -62,32 +61,23 @@ class BMWAuthManager:
             # Try to load existing OAuth token from storage
             has_token = await self._download_oauth_token(email)
             
-            # Get dynamic user agent headers to avoid quota limits
-            user_agent_headers = user_agent_manager.get_headers()
-            
             if has_token:
                 # Re-authenticate using stored token
-                logger.info(f"Re-authenticating {email} using stored OAuth token with dynamic user agent")
+                # Note: Monkey patch has already set dynamic user agent internally
+                logger.info(f"Re-authenticating {email} using stored OAuth token")
                 account = MyBMWAccount(email, password, Regions.REST_OF_WORLD)
                 load_oauth_store_from_file(self.local_token_path, account)
                 
-                # Apply dynamic user agent to avoid quota limits
-                if hasattr(account, '_session') and account._session:
-                    account._session.headers.update(user_agent_headers)
-                
             elif hcaptcha_token:
                 # First-time authentication with hCaptcha
-                logger.info(f"First-time authentication for {email} with hCaptcha and dynamic user agent")
+                # Note: Monkey patch has already set dynamic user agent internally
+                logger.info(f"First-time authentication for {email} with hCaptcha")
                 account = MyBMWAccount(
                     email, 
                     password, 
                     Regions.REST_OF_WORLD,
                     hcaptcha_token=hcaptcha_token
                 )
-                
-                # Apply dynamic user agent to avoid quota limits
-                if hasattr(account, '_session') and account._session:
-                    account._session.headers.update(user_agent_headers)
                 
             else:
                 raise AuthenticationError(
