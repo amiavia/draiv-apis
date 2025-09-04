@@ -200,8 +200,8 @@ async def get_vehicle_status(myskoda: MySkoda, vin: str) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Failed to get vehicle status: {str(e)}")
-        # Return mock data as fallback
-        return get_mock_vehicle_data(vin)
+        # Instead of mock data fallback, let's see what the actual error is
+        raise Exception(f"Real API call failed: {str(e)}")
 
 async def execute_vehicle_action(myskoda: MySkoda, vin: str, action: str, s_pin: str = None) -> Dict[str, Any]:
     """Execute a vehicle action"""
