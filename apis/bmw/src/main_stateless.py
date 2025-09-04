@@ -58,7 +58,7 @@ async def authenticate_bmw(email: str, password: str, hcaptcha_token: str) -> Di
     headers = {
         'x-user-agent': generate_user_agent(),
         'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)',
-        'content-type': 'application/json',
+        'content-type': 'application/x-www-form-urlencoded',
         'accept': 'application/json'
     }
     
@@ -76,7 +76,7 @@ async def authenticate_bmw(email: str, password: str, hcaptcha_token: str) -> Di
         try:
             async with session.post(
                 f"{BMW_AUTH_URL}/authenticate",
-                json=auth_data,
+                data=auth_data,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
