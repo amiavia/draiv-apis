@@ -52,6 +52,9 @@ try:
 except ImportError:
     logger.warning("MySkoda library not available - will return mock data")
     MYSKODA_AVAILABLE = False
+    # Create dummy class for type hints
+    class MySkoda:
+        pass
 
 # Configuration
 PROJECT_ID = os.environ.get("GCP_PROJECT", "miavia-422212")
