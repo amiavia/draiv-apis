@@ -168,33 +168,45 @@ async def get_vehicle_status(myskoda: MySkoda, vin: str) -> Dict[str, Any]:
         logger.info(f"MySkoda object type: {type(myskoda)}")
         logger.info(f"MySkoda object dir: {[attr for attr in dir(myskoda) if not attr.startswith('_')]}")
         
-        # Try to get vehicles list - may need different method
+        # MySkoda API uses singular 'vehicle' and 'get_vehicle(vin)' methods
         vehicles = None
         try:
-            # Try different possible attributes/methods
-            if hasattr(myskoda, 'vehicles'):
-                logger.info("Found 'vehicles' attribute")
-                vehicles = myskoda.vehicles
-            elif hasattr(myskoda, 'get_vehicles'):
-                logger.info("Found 'get_vehicles' method")
-                vehicles = await myskoda.get_vehicles()
-            elif hasattr(myskoda, 'list_vehicles'):
-                logger.info("Found 'list_vehicles' method")
-                vehicles = await myskoda.list_vehicles()
-            elif hasattr(myskoda, 'vehicle'):
-                logger.info("Found 'vehicle' attribute (singular)")
-                vehicles = [myskoda.vehicle]
+            # First, try to get list of VINs in the account
+            if hasattr(myskoda, 'list_vehicle_vins'):
+                logger.info("Using list_vehicle_vins method")
+                vins = await myskoda.list_vehicle_vins()
+                logger.info(f"Found VINs in account: {vins}")
+                
+                # Check if our VIN is in the list
+                if vin in vins:
+                    logger.info(f"Target VIN {vin} found in account")
+                    # Get the specific vehicle
+                    if hasattr(myskoda, 'get_vehicle'):
+                        vehicle_obj = await myskoda.get_vehicle(vin)
+                        vehicles = [vehicle_obj] if vehicle_obj else None
+                else:
+                    logger.warning(f"VIN {vin} not found in account VINs: {vins}")
+                    vehicles = None
+            # Fallback: try get_vehicle directly
             elif hasattr(myskoda, 'get_vehicle'):
-                logger.info("Found 'get_vehicle' method")
-                vehicles = [await myskoda.get_vehicle()]
+                logger.info("Trying get_vehicle with VIN")
+                try:
+                    vehicle_obj = await myskoda.get_vehicle(vin)
+                    vehicles = [vehicle_obj] if vehicle_obj else None
+                except Exception as e:
+                    logger.error(f"get_vehicle failed: {str(e)}")
+                    vehicles = None
+            # Last resort: check vehicle attribute
+            elif hasattr(myskoda, 'vehicle'):
+                logger.info("Checking vehicle attribute")
+                vehicles = [myskoda.vehicle] if myskoda.vehicle else None
             else:
-                # List all available attributes for debugging
-                available_attrs = [attr for attr in dir(myskoda) if not attr.startswith('_')]
-                logger.error(f"Cannot find vehicles method. Available attributes: {available_attrs}")
-                raise Exception(f"Vehicles list not accessible. Available methods: {available_attrs}")
+                available_attrs = [attr for attr in dir(myskoda) if not attr.startswith('_')][:20]
+                logger.error(f"No vehicle access method found. Available: {available_attrs}")
+                vehicles = None
         except Exception as e:
-            logger.error(f"Failed to get vehicles list: {str(e)}")
-            raise Exception(f"Cannot access vehicles: {str(e)}")
+            logger.error(f"Failed to get vehicle: {str(e)}")
+            vehicles = None
             
         # Find vehicle by VIN
         vehicle = None
@@ -271,16 +283,37 @@ async def execute_vehicle_action(myskoda: MySkoda, vin: str, action: str, s_pin:
         vehicles = None
         
         # Try different possible attributes/methods to get vehicles list
-        if hasattr(myskoda, 'vehicles'):
+        if hasattr(myskoda, 'vehicle'):
+            logger.info("Found 'vehicle' attribute (singular)")
+            # Get the vehicle - might need VIN parameter
+            if hasattr(myskoda, 'get_vehicle'):
+                try:
+                    # Try with VIN first
+                    vehicle_obj = await myskoda.get_vehicle(vin)
+                    vehicles = [vehicle_obj] if vehicle_obj else None
+                except:
+                    # Try without VIN
+                    try:
+                        vehicle_obj = await myskoda.get_vehicle()
+                        vehicles = [vehicle_obj] if vehicle_obj else None
+                    except:
+                        # Fall back to attribute
+                        vehicles = [myskoda.vehicle] if myskoda.vehicle else None
+            else:
+                vehicles = [myskoda.vehicle] if myskoda.vehicle else None
+        elif hasattr(myskoda, 'vehicles'):
+            logger.info("Found 'vehicles' attribute (plural)")
             vehicles = myskoda.vehicles
-        elif hasattr(myskoda, 'get_vehicles'):
-            vehicles = await myskoda.get_vehicles()
-        elif hasattr(myskoda, 'list_vehicles'):
-            vehicles = await myskoda.list_vehicles()
-        elif hasattr(myskoda, 'vehicle'):
-            vehicles = [myskoda.vehicle]
-        elif hasattr(myskoda, 'get_vehicle'):
-            vehicles = [await myskoda.get_vehicle()]
+        elif hasattr(myskoda, 'list_vehicle_vins'):
+            logger.info("Using list_vehicle_vins method")
+            vins = await myskoda.list_vehicle_vins()
+            logger.info(f"Found VINs: {vins}")
+            # Try to get vehicle for each VIN
+            vehicles = []
+            for v in vins:
+                if hasattr(myskoda, 'get_vehicle'):
+                    vehicle = await myskoda.get_vehicle(v)
+                    vehicles.append(vehicle)
         
         # Find vehicle by VIN
         if vehicles:
