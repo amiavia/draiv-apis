@@ -1,0 +1,54 @@
+name: Deploy BMW Fixed API
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'apis/bmw/src/bmw_auth_fix.py'
+      - 'apis/bmw/src/main_fixed.py'
+
+env:
+  FUNCTION_NAME: bmw_api_fixed
+  REGION: europe-west6
+  RUNTIME: python311
+  GCP_PROJECT: miavia-422212
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+    
+    - name: Deploy Fixed BMW API
+      run: |
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --runtime ${{ env.RUNTIME }} \
+          --trigger-http \
+          --allow-unauthenticated \
+          --entry-point bmw_api_fixed \
+          --source apis/bmw/src \
+          --region ${{ env.REGION }} \
+          --project ${{ env.GCP_PROJECT }} \
+          --timeout 120 \
+          --memory 256MB \
+          --set-env-vars ENVIRONMENT=production
+    
+    - name: Get Function URL
+      run: |
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region ${{ env.REGION }} \
+          --project ${{ env.GCP_PROJECT }} \
+          --format 'value(serviceConfig.uri)')
+        echo "Function deployed to: $FUNCTION_URL"
+        echo "Test with: curl -X POST $FUNCTION_URL -H 'Content-Type: application/json' -d '{...}'"
