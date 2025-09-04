@@ -122,8 +122,8 @@ async def authenticate_myskoda(email: str, password: str) -> Optional[MySkoda]:
         
     try:
         logger.info(f"Authenticating with MySkoda for user: {email}")
-        myskoda = MySkoda(email, password)
-        await myskoda.connect()
+        myskoda = MySkoda()
+        await myskoda.connect(email, password)
         await myskoda.load_vehicles()
         logger.info("Successfully authenticated with MySkoda")
         return myskoda
