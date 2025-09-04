@@ -228,7 +228,7 @@ async def execute_vehicle_action(myskoda: MySkoda, vin: str, action: str, s_pin:
 
 # Main Cloud Function Handler
 @functions_framework.http
-def skoda_api_stateless(request):
+def skoda_api(request):
     """
     Cloud Function for Skoda Connect API.
     

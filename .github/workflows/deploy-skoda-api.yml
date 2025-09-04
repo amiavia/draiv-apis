@@ -99,7 +99,7 @@ jobs:
           --runtime=${{ env.RUNTIME }} \
           --trigger-http \
           --allow-unauthenticated \
-          --entry-point=skoda_api_stateless \
+          --entry-point=skoda_api \
           --source=. \
           --set-env-vars ENVIRONMENT=staging,GCP_PROJECT=${{ env.GCP_PROJECT_STAGING }} \
           --memory=256MB \
@@ -233,7 +233,7 @@ jobs:
           --runtime=${{ env.RUNTIME }} \
           --trigger-http \
           --allow-unauthenticated \
-          --entry-point=skoda_api_stateless \
+          --entry-point=skoda_api \
           --source=. \
           --set-env-vars ENVIRONMENT=production,GCP_PROJECT=${{ env.GCP_PROJECT_PRODUCTION }} \
           --memory=256MB \
