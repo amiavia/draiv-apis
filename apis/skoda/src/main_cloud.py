@@ -328,19 +328,28 @@ async def execute_vehicle_action(myskoda: MySkoda, vin: str, action: str, s_pin:
             logger.warning(f"Vehicle not found in real API for action {action}: {vin}. Cannot execute action on non-existent vehicle.")
             raise Exception(f"Vehicle not found: {vin}")
             
-        # Execute action based on type
+        # Execute action - methods are on MySkoda object, not Vehicle
+        # The MySkoda methods take VIN as parameter
         result = None
+        vehicle_vin = getattr(vehicle, 'vin', None) or getattr(getattr(vehicle, 'info', None), 'vin', None) or vin
+        
         if action == "lock":
-            result = await vehicle.lock(pin=s_pin)
+            result = await myskoda.lock(vehicle_vin, s_pin)
         elif action == "unlock":
-            result = await vehicle.unlock(pin=s_pin)
+            result = await myskoda.unlock(vehicle_vin, s_pin)
         elif action == "flash":
-            result = await vehicle.flash()
+            result = await myskoda.flash(vehicle_vin)
         elif action == "climate_start":
-            temperature = 22  # Default temperature
-            result = await vehicle.start_climatisation(temperature=temperature, pin=s_pin)
+            # Check if method exists
+            if hasattr(myskoda, 'start_air_conditioning'):
+                result = await myskoda.start_air_conditioning(vehicle_vin)
+            else:
+                result = {"message": "Climate control not available"}
         elif action == "climate_stop":
-            result = await vehicle.stop_climatisation()
+            if hasattr(myskoda, 'stop_air_conditioning'):
+                result = await myskoda.stop_air_conditioning(vehicle_vin)
+            else:
+                result = {"message": "Climate control not available"}
         else:
             raise Exception(f"Unknown action: {action}")
             
