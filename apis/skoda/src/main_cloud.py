@@ -417,6 +417,16 @@ def skoda_api(request):
             result = loop.run_until_complete(get_vehicle_status(myskoda, vin))
         elif action == "health":
             # Return health and MySkoda availability status
+            debug_info = {}
+            if myskoda:
+                debug_info["myskoda_attrs"] = [attr for attr in dir(myskoda) if not attr.startswith('_')]
+                if hasattr(myskoda, 'vehicles'):
+                    try:
+                        debug_info["vehicles_count"] = len(myskoda.vehicles) if myskoda.vehicles else 0
+                        debug_info["vehicles_type"] = str(type(myskoda.vehicles))
+                    except:
+                        debug_info["vehicles_error"] = "Could not access vehicles"
+            
             result = {
                 "service": "skoda_api_stateless",
                 "version": "1.0.0",
@@ -424,7 +434,8 @@ def skoda_api(request):
                 "myskoda_available": MYSKODA_AVAILABLE,
                 "myskoda_import_error": MYSKODA_IMPORT_ERROR,
                 "timestamp": datetime.utcnow().isoformat(),
-                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                "debug": debug_info
             }
         elif action in ["lock", "unlock", "flash", "climate_start", "climate_stop"]:
             result = loop.run_until_complete(execute_vehicle_action(myskoda, vin, action, s_pin))
