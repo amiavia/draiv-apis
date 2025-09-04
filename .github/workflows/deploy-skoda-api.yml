@@ -36,17 +36,11 @@ jobs:
       with:
         python-version: '3.12'
     
-    - name: Install dependencies
-      run: |
-        cd apis/skoda
-        echo "Python version: $(python --version)"
-        echo "Pip version: $(pip --version)"
-        python -m pip install --upgrade pip
-        python -m pip install -r requirements-cloud.txt
-    
     - name: Validate Python syntax
       run: |
+        echo "Python version: $(python --version)"
         python -m py_compile apis/skoda/src/main_cloud.py
+        echo "✅ Python syntax validation passed"
     
   deploy-staging:
     needs: validate

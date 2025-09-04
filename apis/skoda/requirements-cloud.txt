@@ -12,8 +12,7 @@ aiohttp>=3.8.0
 httpx>=0.24.0
 
 # MySkoda library (Python 3.12+ now supported!)
-# TODO: Re-enable once GitHub Actions uses Python 3.12 properly
-# myskoda>=0.8.0
+myskoda>=0.8.0
 
 # Google Cloud (optional - for future enhancements)
 # google-cloud-storage==2.10.0
