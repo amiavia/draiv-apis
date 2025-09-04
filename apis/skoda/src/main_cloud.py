@@ -122,7 +122,11 @@ async def authenticate_myskoda(email: str, password: str) -> Optional[MySkoda]:
         
     try:
         logger.info(f"Authenticating with MySkoda for user: {email}")
-        myskoda = MySkoda()
+        import aiohttp
+        
+        # Create session that will be managed by MySkoda instance
+        session = aiohttp.ClientSession()
+        myskoda = MySkoda(session)
         await myskoda.connect(email, password)
         await myskoda.load_vehicles()
         logger.info("Successfully authenticated with MySkoda")
