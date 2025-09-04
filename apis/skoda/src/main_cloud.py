@@ -141,6 +141,16 @@ async def authenticate_myskoda(email: str, password: str) -> Optional[MySkoda]:
             await myskoda.get_vehicles()
             
         logger.info("Successfully authenticated with MySkoda")
+        
+        # Debug: List ALL attributes and methods
+        all_attrs = dir(myskoda)
+        logger.info(f"MySkoda object attributes: {[attr for attr in all_attrs if not attr.startswith('_')]}")
+        
+        # Check specific vehicle-related attributes
+        if hasattr(myskoda, 'vehicles'):
+            logger.info(f"myskoda.vehicles type: {type(myskoda.vehicles)}")
+            logger.info(f"myskoda.vehicles value: {myskoda.vehicles}")
+        
         return myskoda
     except Exception as e:
         logger.error(f"MySkoda authentication failed: {str(e)}")
