@@ -240,14 +240,33 @@ async def execute_vehicle_action(myskoda: MySkoda, vin: str, action: str, s_pin:
         }
         
     try:
-        # Find vehicle
+        # Find vehicle using same discovery pattern as get_vehicle_status
         vehicle = None
-        for v in myskoda.vehicles:
-            if v.info.vin == vin:
-                vehicle = v
-                break
+        vehicles = None
+        
+        # Try different possible attributes/methods to get vehicles list
+        if hasattr(myskoda, 'vehicles'):
+            vehicles = myskoda.vehicles
+        elif hasattr(myskoda, 'get_vehicles'):
+            vehicles = await myskoda.get_vehicles()
+        elif hasattr(myskoda, 'list_vehicles'):
+            vehicles = await myskoda.list_vehicles()
+        elif hasattr(myskoda, 'vehicle'):
+            vehicles = [myskoda.vehicle]
+        elif hasattr(myskoda, 'get_vehicle'):
+            vehicles = [await myskoda.get_vehicle()]
+        
+        # Find vehicle by VIN
+        if vehicles:
+            for v in vehicles:
+                # Try different ways to access VIN
+                vin_attr = getattr(v, 'vin', None) or getattr(getattr(v, 'info', None), 'vin', None)
+                if vin_attr == vin:
+                    vehicle = v
+                    break
                 
         if not vehicle:
+            logger.warning(f"Vehicle not found in real API for action {action}: {vin}. Cannot execute action on non-existent vehicle.")
             raise Exception(f"Vehicle not found: {vin}")
             
         # Execute action based on type
