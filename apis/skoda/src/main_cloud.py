@@ -34,6 +34,7 @@ import traceback
 import json
 import logging
 import os
+import sys
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -321,12 +322,22 @@ def skoda_api(request):
         # Execute action
         if action == "status":
             result = loop.run_until_complete(get_vehicle_status(myskoda, vin))
+        elif action == "health":
+            # Return health and MySkoda availability status
+            result = {
+                "service": "skoda_api_stateless",
+                "version": "1.0.0",
+                "environment": ENVIRONMENT,
+                "myskoda_available": MYSKODA_AVAILABLE,
+                "timestamp": datetime.utcnow().isoformat(),
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+            }
         elif action in ["lock", "unlock", "flash", "climate_start", "climate_stop"]:
             result = loop.run_until_complete(execute_vehicle_action(myskoda, vin, action, s_pin))
         else:
             return jsonify({
                 "error": f"Unknown action: {action}",
-                "available_actions": ["status", "lock", "unlock", "flash", "climate_start", "climate_stop"]
+                "available_actions": ["status", "health", "lock", "unlock", "flash", "climate_start", "climate_stop"]
             }), 400, cors_headers
         
         # Close connection if available
