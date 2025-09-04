@@ -141,18 +141,43 @@ async def get_vehicle_status(myskoda: MySkoda, vin: str) -> Dict[str, Any]:
         return get_mock_vehicle_data(vin)
         
     try:
+        logger.info(f"Getting vehicle status for VIN: {vin}")
+        
+        # Try to get vehicles list - may need different method
+        vehicles = None
+        try:
+            # Try different possible attributes/methods
+            if hasattr(myskoda, 'vehicles'):
+                vehicles = myskoda.vehicles
+            elif hasattr(myskoda, 'get_vehicles'):
+                vehicles = await myskoda.get_vehicles()
+            elif hasattr(myskoda, 'list_vehicles'):
+                vehicles = await myskoda.list_vehicles()
+            else:
+                logger.error("Cannot find vehicles attribute or method on MySkoda object")
+                raise Exception("Vehicles list not accessible")
+        except Exception as e:
+            logger.error(f"Failed to get vehicles list: {str(e)}")
+            raise Exception(f"Cannot access vehicles: {str(e)}")
+            
         # Find vehicle by VIN
         vehicle = None
-        for v in myskoda.vehicles:
-            if v.info.vin == vin:
-                vehicle = v
-                break
+        if vehicles:
+            for v in vehicles:
+                # Try different ways to access VIN
+                vin_attr = getattr(v, 'vin', None) or getattr(getattr(v, 'info', None), 'vin', None)
+                if vin_attr == vin:
+                    vehicle = v
+                    break
                 
         if not vehicle:
             raise Exception(f"Vehicle not found: {vin}")
             
         # Get vehicle status
-        await vehicle.update_info()
+        if hasattr(vehicle, 'update_info'):
+            await vehicle.update_info()
+        else:
+            logger.warning("Vehicle object doesn't have update_info method")
         
         # Convert to standardized format
         return {
