@@ -189,12 +189,17 @@ async def get_vehicle_status(myskoda: MySkoda, vin: str) -> Dict[str, Any]:
         # Find vehicle by VIN
         vehicle = None
         if vehicles:
-            for v in vehicles:
+            logger.info(f"Found {len(vehicles)} vehicles in account")
+            for i, v in enumerate(vehicles):
                 # Try different ways to access VIN
                 vin_attr = getattr(v, 'vin', None) or getattr(getattr(v, 'info', None), 'vin', None)
+                logger.info(f"Vehicle {i}: VIN={vin_attr}, Looking for={vin}")
                 if vin_attr == vin:
                     vehicle = v
+                    logger.info(f"Found matching vehicle!")
                     break
+        else:
+            logger.warning(f"No vehicles found in account")
                 
         if not vehicle:
             logger.warning(f"Vehicle not found in real API: {vin}. Falling back to mock data for testing.")
