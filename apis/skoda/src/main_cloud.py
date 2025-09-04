@@ -50,9 +50,12 @@ try:
     from myskoda import MySkoda
     from myskoda.models.info import InfoStatus
     MYSKODA_AVAILABLE = True
-except ImportError:
-    logger.warning("MySkoda library not available - will return mock data")
+    MYSKODA_IMPORT_ERROR = None
+    logger.info("MySkoda library successfully imported")
+except ImportError as e:
+    logger.warning(f"MySkoda library not available - will return mock data. Error: {str(e)}")
     MYSKODA_AVAILABLE = False
+    MYSKODA_IMPORT_ERROR = str(e)
     # Create dummy class for type hints
     class MySkoda:
         pass
@@ -329,6 +332,7 @@ def skoda_api(request):
                 "version": "1.0.0",
                 "environment": ENVIRONMENT,
                 "myskoda_available": MYSKODA_AVAILABLE,
+                "myskoda_import_error": MYSKODA_IMPORT_ERROR,
                 "timestamp": datetime.utcnow().isoformat(),
                 "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             }
