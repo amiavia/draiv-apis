@@ -143,19 +143,34 @@ async def get_vehicle_status(myskoda: MySkoda, vin: str) -> Dict[str, Any]:
     try:
         logger.info(f"Getting vehicle status for VIN: {vin}")
         
+        # Debug: Inspect MySkoda object attributes and methods
+        logger.info(f"MySkoda object type: {type(myskoda)}")
+        logger.info(f"MySkoda object dir: {[attr for attr in dir(myskoda) if not attr.startswith('_')]}")
+        
         # Try to get vehicles list - may need different method
         vehicles = None
         try:
             # Try different possible attributes/methods
             if hasattr(myskoda, 'vehicles'):
+                logger.info("Found 'vehicles' attribute")
                 vehicles = myskoda.vehicles
             elif hasattr(myskoda, 'get_vehicles'):
+                logger.info("Found 'get_vehicles' method")
                 vehicles = await myskoda.get_vehicles()
             elif hasattr(myskoda, 'list_vehicles'):
+                logger.info("Found 'list_vehicles' method")
                 vehicles = await myskoda.list_vehicles()
+            elif hasattr(myskoda, 'vehicle'):
+                logger.info("Found 'vehicle' attribute (singular)")
+                vehicles = [myskoda.vehicle]
+            elif hasattr(myskoda, 'get_vehicle'):
+                logger.info("Found 'get_vehicle' method")
+                vehicles = [await myskoda.get_vehicle()]
             else:
-                logger.error("Cannot find vehicles attribute or method on MySkoda object")
-                raise Exception("Vehicles list not accessible")
+                # List all available attributes for debugging
+                available_attrs = [attr for attr in dir(myskoda) if not attr.startswith('_')]
+                logger.error(f"Cannot find vehicles method. Available attributes: {available_attrs}")
+                raise Exception(f"Vehicles list not accessible. Available methods: {available_attrs}")
         except Exception as e:
             logger.error(f"Failed to get vehicles list: {str(e)}")
             raise Exception(f"Cannot access vehicles: {str(e)}")
