@@ -128,7 +128,18 @@ async def authenticate_myskoda(email: str, password: str) -> Optional[MySkoda]:
         session = aiohttp.ClientSession()
         myskoda = MySkoda(session)
         await myskoda.connect(email, password)
-        # Note: load_vehicles may not exist, let's try without it first
+        
+        # Try to refresh/load vehicles if methods exist
+        if hasattr(myskoda, 'refresh'):
+            logger.info("Calling refresh method")
+            await myskoda.refresh()
+        if hasattr(myskoda, 'load_vehicles'):
+            logger.info("Calling load_vehicles method")
+            await myskoda.load_vehicles()
+        if hasattr(myskoda, 'get_vehicles'):
+            logger.info("Calling get_vehicles method")
+            await myskoda.get_vehicles()
+            
         logger.info("Successfully authenticated with MySkoda")
         return myskoda
     except Exception as e:
