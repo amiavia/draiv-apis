@@ -46,6 +46,12 @@ class ExternalServiceError(BMWAPIError):
     def __init__(self, message: str):
         super().__init__(message, "EXTERNAL_SERVICE_ERROR")
 
+class QuotaLimitError(BMWAPIError):
+    """Raised when BMW API quota limit is exceeded"""
+    def __init__(self, message: str, retry_after: int = None):
+        super().__init__(message, "QUOTA_LIMIT_EXCEEDED")
+        self.retry_after = retry_after  # Seconds until quota replenishes
+
 def handle_api_error(error: Exception, status_code: int) -> Tuple[Any, int, Dict[str, str]]:
     """
     Handle API errors and return formatted response
@@ -89,6 +95,12 @@ def handle_api_error(error: Exception, status_code: int) -> Tuple[Any, int, Dict
     elif isinstance(error, ExternalServiceError):
         error_response["error"]["type"] = "external_service"
         error_response["error"]["details"] = "BMW services are temporarily unavailable"
+    elif isinstance(error, QuotaLimitError):
+        error_response["error"]["type"] = "quota_limit"
+        error_response["error"]["details"] = "BMW API quota limit exceeded. Please wait before retrying"
+        if hasattr(error, 'retry_after') and error.retry_after:
+            error_response["error"]["retry_after"] = error.retry_after
+            error_response["error"]["details"] += f". Retry in {error.retry_after} seconds"
     
     # CORS headers
     headers = {

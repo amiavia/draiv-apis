@@ -14,7 +14,8 @@ from bimmer_connected.account import MyBMWAccount
 from bimmer_connected.api.regions import Regions
 from bimmer_connected.cli import load_oauth_store_from_file, store_oauth_store_to_file
 
-from utils.error_handler import AuthenticationError, BMWAPIError
+from utils.error_handler import AuthenticationError, BMWAPIError, QuotaLimitError
+from utils.user_agent_manager import user_agent_manager
 
 logger = logging.getLogger(__name__)
 
@@ -61,21 +62,32 @@ class BMWAuthManager:
             # Try to load existing OAuth token from storage
             has_token = await self._download_oauth_token(email)
             
+            # Get dynamic user agent headers to avoid quota limits
+            user_agent_headers = user_agent_manager.get_headers()
+            
             if has_token:
                 # Re-authenticate using stored token
-                logger.info(f"Re-authenticating {email} using stored OAuth token")
+                logger.info(f"Re-authenticating {email} using stored OAuth token with dynamic user agent")
                 account = MyBMWAccount(email, password, Regions.REST_OF_WORLD)
                 load_oauth_store_from_file(self.local_token_path, account)
                 
+                # Apply dynamic user agent to avoid quota limits
+                if hasattr(account, '_session') and account._session:
+                    account._session.headers.update(user_agent_headers)
+                
             elif hcaptcha_token:
                 # First-time authentication with hCaptcha
-                logger.info(f"First-time authentication for {email} with hCaptcha")
+                logger.info(f"First-time authentication for {email} with hCaptcha and dynamic user agent")
                 account = MyBMWAccount(
                     email, 
                     password, 
                     Regions.REST_OF_WORLD,
                     hcaptcha_token=hcaptcha_token
                 )
+                
+                # Apply dynamic user agent to avoid quota limits
+                if hasattr(account, '_session') and account._session:
+                    account._session.headers.update(user_agent_headers)
                 
             else:
                 raise AuthenticationError(
@@ -100,6 +112,14 @@ class BMWAuthManager:
             
         except Exception as e:
             logger.error(f"Authentication failed for {email}: {e}")
+            
+            # Check if this is a quota limit error (403 with quota message)
+            quota_error = self._parse_quota_error(str(e))
+            if quota_error:
+                logger.warning(f"BMW API quota limit exceeded for {email}: {quota_error['message']}")
+                raise QuotaLimitError(quota_error['message'], quota_error.get('retry_after'))
+            
+            # Handle other authentication errors
             if "unauthorized" in str(e).lower():
                 raise AuthenticationError(f"Invalid credentials for {email}")
             elif "hcaptcha" in str(e).lower():
@@ -108,6 +128,56 @@ class BMWAuthManager:
                 )
             else:
                 raise BMWAPIError(f"Authentication failed: {str(e)}")
+    
+    def _parse_quota_error(self, error_message: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse BMW API quota error message to extract retry timing
+        
+        Args:
+            error_message: Error message from BMW API
+            
+        Returns:
+            Dictionary with quota error details or None if not a quota error
+        """
+        import re
+        
+        # Check for common quota error patterns
+        quota_indicators = [
+            "out of call volume quota",
+            "quota will be replenished",
+            "quota limit exceeded",
+            "too many requests"
+        ]
+        
+        error_lower = error_message.lower()
+        if not any(indicator in error_lower for indicator in quota_indicators):
+            return None
+        
+        # Extract retry time if present (format: "Quota will be replenished in 01:20:28")
+        time_pattern = r'(?:replenished in|retry in|wait|after)\s*(\d{1,2}):(\d{2}):(\d{2})'
+        time_match = re.search(time_pattern, error_lower)
+        
+        retry_after = None
+        if time_match:
+            hours, minutes, seconds = map(int, time_match.groups())
+            retry_after = hours * 3600 + minutes * 60 + seconds
+        else:
+            # Look for simpler time formats like "60 seconds" or "30 minutes"
+            simple_time = re.search(r'(\d+)\s*(second|minute|hour)s?', error_lower)
+            if simple_time:
+                value, unit = simple_time.groups()
+                value = int(value)
+                if unit.startswith('minute'):
+                    retry_after = value * 60
+                elif unit.startswith('hour'):
+                    retry_after = value * 3600
+                else:  # seconds
+                    retry_after = value
+        
+        return {
+            'message': f"BMW API quota limit exceeded. {error_message}",
+            'retry_after': retry_after
+        }
     
     async def _download_oauth_token(self, email: str) -> bool:
         """

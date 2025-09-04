@@ -24,8 +24,10 @@ from utils.error_handler import (
     handle_api_error,
     ValidationError,
     AuthenticationError,
-    RemoteServiceError
+    RemoteServiceError,
+    QuotaLimitError
 )
+from utils.user_agent_manager import user_agent_manager
 
 # Configure structured logging
 logging.basicConfig(
@@ -236,13 +238,22 @@ def bmw_api(request: Request):
     
     # Handle health check
     if request.method == "GET" and request.path == "/health":
-        return jsonify({
+        health_data = {
             "status": "healthy",
             "service": "bmw-api",
             "version": "2.0.0",
             "environment": ENVIRONMENT,
-            "metrics": bmw_service.get_metrics()
-        })
+            "metrics": bmw_service.get_metrics(),
+            "user_agent_info": user_agent_manager.get_stats()
+        }
+        
+        # Add circuit breaker state to health status
+        circuit_state = circuit_breaker.state.value
+        if circuit_state in ["open", "quota_paused"]:
+            health_data["status"] = "degraded"
+            health_data["circuit_breaker_state"] = circuit_state
+            
+        return jsonify(health_data)
     
     # Handle metrics endpoint
     if request.method == "GET" and request.path == "/metrics":
@@ -266,6 +277,8 @@ def bmw_api(request: Request):
         return handle_api_error(e, 400)
     except AuthenticationError as e:
         return handle_api_error(e, 401)
+    except QuotaLimitError as e:
+        return handle_api_error(e, 429)  # 429 Too Many Requests
     except RemoteServiceError as e:
         return handle_api_error(e, 503)
     except BMWAPIError as e:

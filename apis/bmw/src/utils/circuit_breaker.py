@@ -1,6 +1,7 @@
 """
 Circuit Breaker Pattern Implementation
 Prevents cascading failures when external services are unavailable
+Enhanced with quota-aware handling for BMW API
 """
 import asyncio
 import logging
@@ -15,6 +16,7 @@ class CircuitState(Enum):
     CLOSED = "closed"  # Normal operation
     OPEN = "open"      # Service is down, fail fast
     HALF_OPEN = "half_open"  # Testing if service recovered
+    QUOTA_PAUSED = "quota_paused"  # Paused due to quota limits
 
 class CircuitBreaker:
     """
@@ -52,6 +54,10 @@ class CircuitBreaker:
         self.successful_calls = 0
         self.total_calls = 0
         
+        # Quota handling
+        self.quota_pause_until: Optional[datetime] = None
+        self.quota_retry_count = 0
+        
     async def call(self, func: Callable, *args, **kwargs) -> Any:
         """
         Execute function through circuit breaker
@@ -84,6 +90,21 @@ class CircuitBreaker:
                     f"Circuit breaker is OPEN. Service unavailable. "
                     f"Retry in {time_until_reset:.0f} seconds"
                 )
+        elif self.state == CircuitState.QUOTA_PAUSED:
+            if self._should_resume_from_quota():
+                self.state = CircuitState.CLOSED
+                logger.info(f"{self.name}: Quota pause expired, resuming normal operation")
+            else:
+                time_until_resume = self._time_until_quota_resume()
+                logger.warning(
+                    f"{self.name}: Circuit is QUOTA_PAUSED. "
+                    f"Quota will be available in {time_until_resume:.0f} seconds"
+                )
+                from utils.error_handler import QuotaLimitError
+                raise QuotaLimitError(
+                    f"BMW API quota limit active. Retry in {time_until_resume:.0f} seconds",
+                    retry_after=int(time_until_resume)
+                )
         
         try:
             # Execute the function
@@ -96,14 +117,20 @@ class CircuitBreaker:
             self._on_success()
             return result
             
-        except self.expected_exception as e:
-            # Call failed
-            self._on_failure()
-            raise
         except Exception as e:
-            # Unexpected exception, don't count as circuit failure
-            logger.error(f"{self.name}: Unexpected exception: {e}")
-            raise
+            # Check if this is a quota error that should pause the circuit
+            from utils.error_handler import QuotaLimitError
+            if isinstance(e, QuotaLimitError):
+                self._on_quota_error(e)
+                raise
+            elif isinstance(e, self.expected_exception):
+                # Regular service failure
+                self._on_failure()
+                raise
+            else:
+                # Unexpected exception, don't count as circuit failure
+                logger.error(f"{self.name}: Unexpected exception: {e}")
+                raise
     
     def _on_success(self) -> None:
         """Handle successful call"""
@@ -115,9 +142,15 @@ class CircuitBreaker:
             self.state = CircuitState.CLOSED
             self.failure_count = 0
             self.last_failure_time = None
+            self.quota_retry_count = 0  # Reset quota retry count on success
+            self.quota_pause_until = None
         elif self.state == CircuitState.CLOSED:
             # Reset failure count on success
             self.failure_count = 0
+            # Reset quota retry count if we had quota issues before
+            if self.quota_retry_count > 0:
+                self.quota_retry_count = 0
+                logger.info(f"{self.name}: Quota retry count reset after successful call")
     
     def _on_failure(self) -> None:
         """Handle failed call"""
@@ -135,6 +168,38 @@ class CircuitBreaker:
                 f"circuit entering OPEN state"
             )
             self.state = CircuitState.OPEN
+    
+    def _on_quota_error(self, error) -> None:
+        """Handle quota limit error"""
+        self.quota_retry_count += 1
+        
+        # Calculate pause duration based on retry_after from error
+        if hasattr(error, 'retry_after') and error.retry_after:
+            pause_seconds = error.retry_after
+        else:
+            # Default pause with exponential backoff
+            pause_seconds = min(300, 60 * (2 ** (self.quota_retry_count - 1)))  # Max 5 minutes
+        
+        self.quota_pause_until = datetime.now() + timedelta(seconds=pause_seconds)
+        self.state = CircuitState.QUOTA_PAUSED
+        
+        logger.warning(
+            f"{self.name}: Quota limit reached, pausing for {pause_seconds} seconds. "
+            f"Retry count: {self.quota_retry_count}"
+        )
+    
+    def _should_resume_from_quota(self) -> bool:
+        """Check if quota pause period has expired"""
+        if not self.quota_pause_until:
+            return True
+        return datetime.now() >= self.quota_pause_until
+    
+    def _time_until_quota_resume(self) -> float:
+        """Calculate seconds until quota pause expires"""
+        if not self.quota_pause_until:
+            return 0
+        time_remaining = self.quota_pause_until - datetime.now()
+        return max(0, time_remaining.total_seconds())
     
     def _should_attempt_reset(self) -> bool:
         """Check if enough time has passed to attempt reset"""
@@ -179,5 +244,14 @@ class CircuitBreaker:
             "time_until_reset": (
                 self._time_until_reset()
                 if self.state == CircuitState.OPEN else None
+            ),
+            "quota_retry_count": self.quota_retry_count,
+            "quota_pause_until": (
+                self.quota_pause_until.isoformat()
+                if self.quota_pause_until else None
+            ),
+            "time_until_quota_resume": (
+                self._time_until_quota_resume()
+                if self.state == CircuitState.QUOTA_PAUSED else None
             )
         }

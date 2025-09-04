@@ -2,7 +2,7 @@
 # Production dependencies for BMW Connected Drive API
 
 # Core dependencies
-bimmer-connected==0.16.4
+bimmer-connected==0.17.2
 flask==3.0.3
 functions-framework==3.8.2
 
