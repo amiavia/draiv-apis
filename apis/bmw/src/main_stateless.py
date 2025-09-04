@@ -23,7 +23,7 @@ gcloud functions deploy bmw_api_stateless \
 
 Requirements:
 -------------
-bimmer-connected>=0.14.0
+bimmer-connected>=0.17.2
 flask>=2.0.0
 functions-framework>=3.0.0
 """
@@ -31,11 +31,78 @@ functions-framework>=3.0.0
 import asyncio
 import traceback
 import json
+import re
+import os
+import sys
+
+# Add parent directory to path to import utils
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import functions_framework
 from flask import jsonify, Response
 from bimmer_connected.account import MyBMWAccount
 from bimmer_connected.api.regions import Regions
 from bimmer_connected.vehicle.remote_services import RemoteServices, Services
+
+try:
+    from utils.user_agent_manager import user_agent_manager
+except ImportError:
+    # Fallback if utils not available
+    class FallbackUserAgentManager:
+        def get_headers(self):
+            return {}
+    user_agent_manager = FallbackUserAgentManager()
+
+# 🔹 Helper function for quota error parsing
+
+def _parse_quota_error(error_message: str) -> dict:
+    """
+    Parse BMW API quota error message to extract retry timing
+    
+    Args:
+        error_message: Error message from BMW API
+        
+    Returns:
+        Dictionary with quota error details or None if not a quota error
+    """
+    # Check for common quota error patterns
+    quota_indicators = [
+        "out of call volume quota",
+        "quota will be replenished",
+        "quota limit exceeded",
+        "too many requests",
+        "429"
+    ]
+    
+    error_lower = error_message.lower()
+    if not any(indicator in error_lower for indicator in quota_indicators):
+        return None
+    
+    # Extract retry time if present (format: "Quota will be replenished in 01:20:28")
+    time_pattern = r'(?:replenished in|retry in|wait|after)\s*(\d{1,2}):(\d{2}):(\d{2})'
+    time_match = re.search(time_pattern, error_lower)
+    
+    retry_after = None
+    if time_match:
+        hours, minutes, seconds = map(int, time_match.groups())
+        retry_after = hours * 3600 + minutes * 60 + seconds
+    else:
+        # Look for simpler time formats like "60 seconds" or "30 minutes"
+        simple_time = re.search(r'(\d+)\s*(second|minute|hour)s?', error_lower)
+        if simple_time:
+            value, unit = simple_time.groups()
+            value = int(value)
+            if unit.startswith('minute'):
+                retry_after = value * 60
+            elif unit.startswith('hour'):
+                retry_after = value * 3600
+            else:  # seconds
+                retry_after = value
+    
+    return {
+        'message': f"BMW API quota limit exceeded. {error_message}",
+        'retry_after': retry_after
+    }
 
 # 🔹 Main Cloud Function Handler - Stateless Version
 
@@ -103,6 +170,10 @@ def bmw_api(request):
     print(f"📝 hCaptcha token (first 50 chars): {hcaptcha_token[:50]}...")
     
     try:
+        # Get dynamic user agent headers to avoid quota limits
+        user_agent_headers = user_agent_manager.get_headers()
+        print(f"🔧 Using dynamic user agent: {user_agent_headers.get('x-user-agent', 'default')}")
+        
         # Create new account instance with hCaptcha for fresh authentication
         # Note: REST_OF_WORLD is typically used for European accounts
         account = MyBMWAccount(
@@ -111,6 +182,10 @@ def bmw_api(request):
             Regions.REST_OF_WORLD, 
             hcaptcha_token=hcaptcha_token
         )
+        
+        # Apply dynamic user agent to avoid quota limits
+        if hasattr(account, '_session') and account._session and user_agent_headers:
+            account._session.headers.update(user_agent_headers)
         
         # ✅ Fetch vehicles from BMW servers with timeout
         print("🚗 Fetching vehicle data...")
@@ -417,6 +492,16 @@ def bmw_api(request):
         error_message = str(e)
         print(f"❌ Error: {error_message}")
         print(f"Traceback: {traceback.format_exc()}")
+        
+        # Check if this is a quota limit error
+        quota_error = _parse_quota_error(error_message)
+        if quota_error:
+            return jsonify({
+                "error": "BMW API quota limit exceeded",
+                "details": quota_error['message'],
+                "retry_after": quota_error.get('retry_after'),
+                "hint": "BMW has imposed rate limits. Please wait before retrying."
+            }), 429
         
         # Check for specific error types
         if "invalid_client" in error_message.lower():
