@@ -1,14 +1,18 @@
 # Skoda API Cloud Function Requirements
 # Minimal dependencies for Google Cloud Functions deployment
+# Note: myskoda library requires Python 3.12+ which is not available on Cloud Functions
+# This version runs in mock mode for testing until Cloud Functions supports Python 3.12
 
 # Core dependencies
-myskoda==0.4.8
 flask==3.0.3
 functions-framework==3.8.2
 
-# Async support (required by myskoda)
-aiohttp==3.10.10
-httpx==0.27.0
+# Async support 
+aiohttp>=3.8.0
+httpx>=0.24.0
+
+# MySkoda library (commented out until Python 3.12 available)
+# myskoda>=0.8.0
 
 # Google Cloud (optional - for future enhancements)
 # google-cloud-storage==2.10.0
