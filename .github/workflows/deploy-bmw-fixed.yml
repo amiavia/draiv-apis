@@ -34,8 +34,7 @@ jobs:
         cd apis/bmw
         # Copy the fixed implementation to main.py for deployment
         cp src/main_fixed.py main.py
-        # Ensure requirements.txt is in the right place
-        cp requirements.txt .
+        # Requirements.txt is already in place
     
     - name: Deploy Fixed BMW API
       working-directory: apis/bmw
