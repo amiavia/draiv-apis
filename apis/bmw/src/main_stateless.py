@@ -395,14 +395,17 @@ def bmw_api(request):
     
     try:
         # Create event loop for async operations
+        print("🔧 EXTREME DEBUG: Creating event loop...")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         # Step 1: Authenticate with BMW
-        print("🚀 Step 1: Authenticating with BMW...")
+        print("🚀 EXTREME DEBUG: Step 1: Authenticating with BMW...")
+        print(f"🔧 EXTREME DEBUG: About to call authenticate_bmw function...")
         auth_result = loop.run_until_complete(
             authenticate_bmw(email, password, hcaptcha_token)
         )
+        print(f"🔧 EXTREME DEBUG: authenticate_bmw returned: {auth_result}")
         
         if not auth_result.get('success'):
             error_msg = auth_result.get('error', 'Unknown error')
@@ -484,14 +487,15 @@ def bmw_api(request):
     except Exception as e:
         import traceback
         error_message = str(e)
-        print(f"💥 Critical error: {error_message}")
-        print(f"Traceback: {traceback.format_exc()}")
+        print(f"💥 EXTREME DEBUG: Critical error: {error_message}")
+        print(f"🔧 EXTREME DEBUG: Full traceback: {traceback.format_exc()}")
         
         return jsonify({
-            "error": "Request processing failed",
+            "error": "EXTREME DEBUG: Request processing failed",
             "details": error_message,
-            "implementation": "direct_api",
-            "traceback": traceback.format_exc() if request.args.get('debug') else None
+            "implementation": "direct_api_with_debug",
+            "full_traceback": traceback.format_exc(),
+            "debug_info": "This is our OAuth PKCE implementation with extreme debugging"
         }), 500
     
     finally:
