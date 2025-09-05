@@ -5,8 +5,8 @@
 flask==3.0.3
 functions-framework==3.8.2
 
-# BMW API library (with Android patch applied)
-bimmer_connected==0.14.*
+# BMW API library (includes PR #743 fingerprint fix for quota issues)
+bimmer_connected==0.17.3
 
 # Async support
 aiohttp==3.10.10
