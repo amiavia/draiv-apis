@@ -12,7 +12,7 @@ import json
 import asyncio
 from pathlib import Path
 from google.cloud import storage
-from flask import Flask, request, jsonify
+from flask import request, jsonify
 import functions_framework
 from bimmer_connected.account import MyBMWAccount
 from bimmer_connected.api.regions import Regions
@@ -23,8 +23,6 @@ from bimmer_connected.vehicle.remote_services import RemoteServices, Services
 BUCKET_NAME = "bmw-api-bucket"
 OAUTH_FILENAME = "bmw_oauth.json"
 LOCAL_TOKEN_FILE = "/tmp/bmw_oauth.json"
-
-app = Flask(__name__)
 
 # 🔹 Utility Functions for OAuth Token Management
 
@@ -250,5 +248,5 @@ def bmw_api(request):
     except Exception as e:
         return jsonify({"error": f"Failed to process request: {str(e)}"}), 500
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
+# Note: For Cloud Functions deployment, the function is invoked via functions_framework
+# No need for app.run() as Cloud Functions handles the HTTP server
