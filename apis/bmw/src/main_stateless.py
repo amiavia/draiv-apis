@@ -68,11 +68,13 @@ async def authenticate_bmw_simple(email: str, password: str, hcaptcha_token: Opt
         # Create BMW account using standard bimmer_connected approach
         # The Android patch ensures BMW sees our unique fingerprint
         print("🚗 Creating MyBMWAccount with Docker workaround patch...")
+        
+        # bimmer_connected doesn't accept hcaptcha_token parameter directly
+        # The library should handle auth internally
         account = MyBMWAccount(
             username=email,
             password=password,
-            region=Regions.REST_OF_WORLD,
-            hcaptcha_token=hcaptcha_token
+            region=Regions.REST_OF_WORLD
         )
         
         # Test authentication by getting vehicles
