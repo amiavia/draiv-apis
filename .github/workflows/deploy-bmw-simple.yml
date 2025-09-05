@@ -1,0 +1,153 @@
+name: Deploy BMW API Simple (Docker Workaround)
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'apis/bmw/src/main_simple.py'
+      - 'apis/bmw/src/utils/bmw_android_patch.py'
+      - 'apis/bmw/requirements-simple.txt'
+      - '.github/workflows/deploy-bmw-simple.yml'
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deployment even without changes'
+        required: false
+        default: 'false'
+
+jobs:
+  deploy-bmw-simple:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY_PRODUCTION }}
+        
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      
+    - name: Prepare deployment directory
+      run: |
+        echo "📦 Preparing BMW API Simple deployment..."
+        cd apis/bmw
+        
+        # Create clean deployment directory
+        mkdir -p deploy-simple
+        
+        # Copy source files
+        cp -r src/* deploy-simple/
+        
+        # Copy requirements file
+        cp requirements-simple.txt deploy-simple/requirements.txt
+        
+        # Verify files
+        echo "📋 Deployment files:"
+        ls -la deploy-simple/
+        
+        echo "🔍 Requirements:"
+        cat deploy-simple/requirements.txt
+        
+        echo "🎯 Entry point verification:"
+        grep -n "def bmw_api_simple" deploy-simple/main_simple.py || echo "⚠️ Entry point not found"
+        
+    - name: Deploy BMW API Simple Function
+      run: |
+        echo "🚀 Deploying BMW API Simple (Docker Workaround + bimmer_connected)..."
+        cd apis/bmw
+        
+        gcloud functions deploy bmw_api_simple \
+          --gen2 \
+          --runtime python310 \
+          --source deploy-simple \
+          --entry-point bmw_api_simple \
+          --trigger-http \
+          --allow-unauthenticated \
+          --region europe-west6 \
+          --memory 1Gi \
+          --timeout 120s \
+          --max-instances 10 \
+          --set-env-vars ENVIRONMENT=production \
+          --quiet
+          
+    - name: Verify deployment
+      run: |
+        echo "🩺 Verifying BMW API Simple deployment..."
+        
+        # Wait a moment for function to be ready
+        sleep 15
+        
+        # Test health endpoint
+        HEALTH_URL="https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_simple/health"
+        echo "📡 Testing health endpoint: $HEALTH_URL"
+        
+        HEALTH_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" "$HEALTH_URL")
+        HTTP_CODE=$(echo "$HEALTH_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        HEALTH_BODY=$(echo "$HEALTH_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
+        
+        echo "HTTP Status: $HTTP_CODE"
+        echo "Response: $HEALTH_BODY"
+        
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "✅ Health check passed!"
+          
+          # Parse and display key info
+          echo "$HEALTH_BODY" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(f'🎯 Service: {data.get(\"service\", \"unknown\")}')
+    print(f'📦 Implementation: {data.get(\"implementation\", \"unknown\")}')
+    
+    patch_info = data.get('patch_info', {})
+    if patch_info:
+        print(f'🔧 Generated Fingerprint: {patch_info.get(\"generated_fingerprint\", \"unknown\")}')
+        print(f'🤖 Patch Active: {patch_info.get(\"patch_active\", \"unknown\")}')
+    
+    print(f'📚 bimmer_connected Available: {data.get(\"bimmer_connected_available\", \"unknown\")}')
+except:
+    print('Could not parse health response JSON')
+"
+          
+        else
+          echo "❌ Health check failed with status $HTTP_CODE"
+          echo "Response: $HEALTH_BODY"
+          exit 1
+        fi
+        
+    - name: Display deployment info
+      run: |
+        echo ""
+        echo "✅ BMW API Simple deployment complete!"
+        echo ""
+        echo "🔗 Function URL:"
+        echo "   https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_simple"
+        echo ""
+        echo "🩺 Health Check:"
+        echo "   curl https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_simple/health"
+        echo ""
+        echo "🧪 Test Lock Command:"
+        echo '   curl -X POST "https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_simple" \'
+        echo '     -H "Content-Type: application/json" \'
+        echo '     -d "{"'
+        echo '       "email": "Info@miavia.ai",'
+        echo '       "password": "qegbe6-ritdoz-vikDeK",'
+        echo '       "wkn": "WBA3K51040K175114",'
+        echo '       "action": "lock",'
+        echo '       "hcaptcha": "FRESH_HCAPTCHA_TOKEN"'
+        echo '     }"'"
+        echo ""
+        echo "🎯 This deployment uses:"
+        echo "   - Docker workaround approach (proven)"
+        echo "   - Dynamic PR #743 Android fingerprints"
+        echo "   - Standard bimmer_connected authentication"
+        echo "   - Each deployment gets unique quota isolation"
