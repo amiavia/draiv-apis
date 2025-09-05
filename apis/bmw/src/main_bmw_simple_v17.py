@@ -16,15 +16,19 @@ from bimmer_connected.vehicle.remote_services import RemoteServices
 
 # Configuration
 BUCKET_NAME = "bmw-api-bucket"
-OAUTH_FILENAME = "bmw_oauth.json"
 LOCAL_TOKEN_FILE = "/tmp/bmw_oauth.json"
 
-def download_oauth_file():
+def get_oauth_filename(email):
+    """Get user-specific OAuth filename"""
+    safe_email = email.replace('@', '_at_').replace('.', '_')
+    return f"oauth_tokens/{safe_email}_oauth.json"
+
+def download_oauth_file(email):
     """Download OAuth token from GCS"""
     try:
         client = storage.Client()
         bucket = client.bucket(BUCKET_NAME)
-        blob = bucket.blob(OAUTH_FILENAME)
+        blob = bucket.blob(get_oauth_filename(email))
         
         if blob.exists():
             blob.download_to_filename(LOCAL_TOKEN_FILE)
@@ -34,13 +38,13 @@ def download_oauth_file():
         print(f"⚠️ Could not download OAuth token: {e}")
     return False
 
-def upload_oauth_file():
+def upload_oauth_file(email):
     """Upload OAuth token to GCS"""
     try:
         if os.path.exists(LOCAL_TOKEN_FILE):
             client = storage.Client()
             bucket = client.bucket(BUCKET_NAME)
-            blob = bucket.blob(OAUTH_FILENAME)
+            blob = bucket.blob(get_oauth_filename(email))
             blob.upload_from_filename(LOCAL_TOKEN_FILE)
             print("✅ OAuth token uploaded to GCS")
     except Exception as e:
@@ -101,19 +105,22 @@ def bmw_api(request):
     
     try:
         # Check for existing OAuth token
-        has_token = download_oauth_file()
+        has_token = download_oauth_file(email)
         
-        # Create account instance
+        # Create account instance with hCaptcha if provided
         print(f"🔐 Authenticating as {email}...")
-        account = MyBMWAccount(email, password, Regions.REST_OF_WORLD)
+        if hcaptcha_token and not has_token:
+            # First-time auth with hCaptcha
+            print("🔑 Using hCaptcha token for first authentication")
+            account = MyBMWAccount(email, password, Regions.REST_OF_WORLD, hcaptcha_token=hcaptcha_token)
+        else:
+            # Standard auth (will use stored token if available)
+            account = MyBMWAccount(email, password, Regions.REST_OF_WORLD)
         
         # Load existing token if available
         if has_token:
             print("📂 Using stored OAuth token")
             load_oauth_store_from_file(Path(LOCAL_TOKEN_FILE), account)
-        elif not hcaptcha_token:
-            # For first auth, hCaptcha might be needed
-            print("⚠️ First authentication may require hCaptcha token")
         
         # Get vehicles (this triggers authentication)
         print("🚗 Fetching vehicles...")
@@ -129,7 +136,7 @@ def bmw_api(request):
         
         # Store updated OAuth token
         store_oauth_store_to_file(Path(LOCAL_TOKEN_FILE), account)
-        upload_oauth_file()
+        upload_oauth_file(email)
         
         # Build base response
         response = {
