@@ -1,6 +1,0 @@
-functions-framework==3.*
-flask==2.3.*
-google-cloud-storage==2.*
-google-cloud-secret-manager==2.*
-bimmer_connected==0.14.*
-aiohttp==3.*
