@@ -1,0 +1,9 @@
+# BMW API Fingerprint Requirements
+# Minimal dependencies for Cloud Run deployment
+
+functions-framework==3.8.2
+flask==3.0.3
+aiohttp==3.10.10
+google-cloud-storage==2.18.2
+google-cloud-secret-manager==2.20.2
+python-dotenv==1.0.1

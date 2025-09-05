@@ -1,0 +1,178 @@
+name: Deploy BMW Fingerprint API
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - 'apis/bmw/src/main_fingerprint.py'
+      - '.github/workflows/deploy-bmw-fingerprint.yml'
+
+env:
+  SERVICE_NAME: bmw-api-fingerprint
+  REGION: europe-west6
+  GCP_PROJECT_STAGING: draiv-427115
+  GCP_PROJECT_PROD: miavia-422212
+  MEMORY: 512Mi
+  CPU: 1
+  TIMEOUT: 60s
+  MAX_INSTANCES: 100
+  MIN_INSTANCES: 0
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set environment variables
+      run: |
+        if [[ "${{ github.event.inputs.environment }}" == "production" || "${{ github.ref }}" == "refs/heads/main" ]]; then
+          echo "ENVIRONMENT=production" >> $GITHUB_ENV
+          echo "GCP_PROJECT=${{ env.GCP_PROJECT_PROD }}" >> $GITHUB_ENV
+          echo "SERVICE_SUFFIX=-prod" >> $GITHUB_ENV
+        else
+          echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          echo "GCP_PROJECT=${{ env.GCP_PROJECT_STAGING }}" >> $GITHUB_ENV
+          echo "SERVICE_SUFFIX=-staging" >> $GITHUB_ENV
+        fi
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.GCP_PROJECT }}
+    
+    - name: Create requirements file
+      working-directory: apis/bmw
+      run: |
+        cat > requirements.txt << EOF
+        functions-framework==3.8.2
+        flask==3.0.3
+        aiohttp==3.10.10
+        google-cloud-storage==2.18.2
+        google-cloud-secret-manager==2.20.2
+        python-dotenv==1.0.1
+        EOF
+    
+    - name: Deploy to Cloud Run
+      working-directory: apis/bmw
+      run: |
+        # Copy the fingerprint implementation to main.py for deployment
+        cp src/main_fingerprint.py src/main.py
+        
+        # Deploy using source code
+        gcloud run deploy ${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }} \
+          --source src \
+          --entry-point bmw_api_fingerprint \
+          --region ${{ env.REGION }} \
+          --platform managed \
+          --memory ${{ env.MEMORY }} \
+          --cpu ${{ env.CPU }} \
+          --timeout ${{ env.TIMEOUT }} \
+          --max-instances ${{ env.MAX_INSTANCES }} \
+          --min-instances ${{ env.MIN_INSTANCES }} \
+          --allow-unauthenticated \
+          --set-env-vars="ENVIRONMENT=${{ env.ENVIRONMENT }}" \
+          --set-env-vars="K_SERVICE=${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }}" \
+          --set-env-vars="BMW_REGION=rest_of_world" \
+          --project ${{ env.GCP_PROJECT }} \
+          --quiet
+        
+        # Restore original main.py
+        git checkout src/main.py || true
+    
+    - name: Get Service URL
+      id: get-url
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }} \
+          --region=${{ env.REGION }} \
+          --project=${{ env.GCP_PROJECT }} \
+          --format='value(status.url)')
+        echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
+        echo "Service deployed to: $SERVICE_URL"
+    
+    - name: Test Health Endpoint
+      run: |
+        SERVICE_URL="${{ steps.get-url.outputs.service_url }}"
+        echo "Testing health endpoint: $SERVICE_URL/health"
+        
+        # Wait for service to be ready
+        sleep 10
+        
+        # Test health endpoint
+        HEALTH_RESPONSE=$(curl -s "$SERVICE_URL/health")
+        echo "Health response: $HEALTH_RESPONSE"
+        
+        # Check if fingerprint is present
+        if echo "$HEALTH_RESPONSE" | grep -q "fingerprint"; then
+          echo "✅ Health check passed - fingerprint found"
+          echo "$HEALTH_RESPONSE" | python3 -m json.tool
+        else
+          echo "❌ Health check failed - no fingerprint found"
+          exit 1
+        fi
+    
+    - name: Create deployment summary
+      if: success()
+      run: |
+        SERVICE_URL="${{ steps.get-url.outputs.service_url }}"
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        # BMW API Fingerprint Deployment Summary
+        
+        ## Deployment Details
+        - **Environment**: ${{ env.ENVIRONMENT }}
+        - **Service**: ${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }}
+        - **Region**: ${{ env.REGION }}
+        - **Project**: ${{ env.GCP_PROJECT }}
+        - **URL**: ${SERVICE_URL}
+        
+        ## Features
+        - ✅ Dynamic fingerprint generation (PR #743)
+        - ✅ Unique quota per deployment
+        - ✅ OAuth PKCE authentication
+        - ✅ Remote services support
+        
+        ## Test Commands
+        
+        ### Check Health
+        \`\`\`bash
+        curl ${SERVICE_URL}/health | jq .
+        \`\`\`
+        
+        ### Test Authentication
+        \`\`\`bash
+        curl -X POST ${SERVICE_URL} \\
+          -H 'Content-Type: application/json' \\
+          -d '{"email":"test@example.com","password":"test","action":"status"}'
+        \`\`\`
+        
+        ### View Logs
+        \`\`\`bash
+        gcloud run logs read --service ${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }} \\
+          --region ${{ env.REGION }} --project ${{ env.GCP_PROJECT }}
+        \`\`\`
+        EOF
+    
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ Deployment failed for ${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }}"
+        echo "Check the logs above for details"

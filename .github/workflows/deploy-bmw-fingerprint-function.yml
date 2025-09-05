@@ -1,0 +1,179 @@
+name: Deploy BMW Fingerprint (Cloud Function)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  FUNCTION_NAME: bmw-api-fingerprint
+  REGION: europe-west6
+  RUNTIME: python311
+  GCP_PROJECT_STAGING: draiv-427115
+  GCP_PROJECT_PROD: miavia-422212
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set environment variables
+      run: |
+        if [[ "${{ github.event.inputs.environment }}" == "production" ]]; then
+          echo "ENVIRONMENT=production" >> $GITHUB_ENV
+          echo "GCP_PROJECT=${{ env.GCP_PROJECT_PROD }}" >> $GITHUB_ENV
+          echo "FUNCTION_SUFFIX=_prod" >> $GITHUB_ENV
+        else
+          echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          echo "GCP_PROJECT=${{ env.GCP_PROJECT_STAGING }}" >> $GITHUB_ENV
+          echo "FUNCTION_SUFFIX=_staging" >> $GITHUB_ENV
+        fi
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.GCP_PROJECT }}
+    
+    - name: Prepare deployment files
+      working-directory: apis/bmw
+      run: |
+        # Create deployment directory
+        mkdir -p deploy_temp
+        
+        # Copy main fingerprint file
+        cp src/main_fingerprint.py deploy_temp/main.py
+        
+        # Create minimal requirements for Cloud Functions
+        cat > deploy_temp/requirements.txt << EOF
+        functions-framework==3.8.2
+        flask==3.0.3
+        aiohttp==3.10.10
+        google-cloud-storage==2.18.2
+        google-cloud-secret-manager==2.20.2
+        EOF
+        
+        echo "Files prepared for deployment:"
+        ls -la deploy_temp/
+    
+    - name: Deploy Cloud Function
+      working-directory: apis/bmw/deploy_temp
+      run: |
+        gcloud functions deploy ${{ env.FUNCTION_NAME }}${{ env.FUNCTION_SUFFIX }} \
+          --runtime ${{ env.RUNTIME }} \
+          --trigger-http \
+          --allow-unauthenticated \
+          --entry-point bmw_api_fingerprint \
+          --source . \
+          --region ${{ env.REGION }} \
+          --project ${{ env.GCP_PROJECT }} \
+          --timeout 60 \
+          --memory 512MB \
+          --max-instances 100 \
+          --set-env-vars ENVIRONMENT=${{ env.ENVIRONMENT }} \
+          --set-env-vars K_SERVICE=${{ env.FUNCTION_NAME }}${{ env.FUNCTION_SUFFIX }} \
+          --set-env-vars BMW_REGION=rest_of_world
+    
+    - name: Get Function URL
+      id: get-url
+      run: |
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }}${{ env.FUNCTION_SUFFIX }} \
+          --region ${{ env.REGION }} \
+          --project ${{ env.GCP_PROJECT }} \
+          --format 'value(serviceConfig.uri)')
+        echo "function_url=$FUNCTION_URL" >> $GITHUB_OUTPUT
+        echo "Function deployed to: $FUNCTION_URL"
+    
+    - name: Test Function
+      run: |
+        FUNCTION_URL="${{ steps.get-url.outputs.function_url }}"
+        echo "Testing function: $FUNCTION_URL"
+        
+        # Wait for function to be ready
+        sleep 15
+        
+        # Test health endpoint
+        echo "Testing health endpoint..."
+        HEALTH_RESPONSE=$(curl -s "$FUNCTION_URL/health" || echo "Failed")
+        
+        if echo "$HEALTH_RESPONSE" | grep -q "fingerprint"; then
+          echo "✅ Function test passed"
+          echo "$HEALTH_RESPONSE" | python3 -m json.tool || echo "$HEALTH_RESPONSE"
+        else
+          echo "❌ Function test failed"
+          echo "Response: $HEALTH_RESPONSE"
+          
+          # Try to get logs
+          echo "Fetching function logs..."
+          gcloud functions logs read ${{ env.FUNCTION_NAME }}${{ env.FUNCTION_SUFFIX }} \
+            --region ${{ env.REGION }} \
+            --project ${{ env.GCP_PROJECT }} \
+            --limit 50
+        fi
+    
+    - name: Cleanup
+      if: always()
+      working-directory: apis/bmw
+      run: |
+        rm -rf deploy_temp/
+    
+    - name: Create deployment summary
+      if: success()
+      run: |
+        FUNCTION_URL="${{ steps.get-url.outputs.function_url }}"
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        # BMW API Fingerprint Function Deployment
+        
+        ## Details
+        - **Environment**: ${{ env.ENVIRONMENT }}
+        - **Function**: ${{ env.FUNCTION_NAME }}${{ env.FUNCTION_SUFFIX }}
+        - **Region**: ${{ env.REGION }}
+        - **Project**: ${{ env.GCP_PROJECT }}
+        - **URL**: ${FUNCTION_URL}
+        
+        ## Test the Function
+        
+        ### Health Check
+        \`\`\`bash
+        curl ${FUNCTION_URL}/health | jq .
+        \`\`\`
+        
+        ### Test with BMW Credentials
+        \`\`\`bash
+        curl -X POST ${FUNCTION_URL} \\
+          -H 'Content-Type: application/json' \\
+          -d '{
+            "email": "your-email@example.com",
+            "password": "your-password",
+            "action": "status"
+          }'
+        \`\`\`
+        
+        ### View Logs
+        \`\`\`bash
+        gcloud functions logs read ${{ env.FUNCTION_NAME }}${{ env.FUNCTION_SUFFIX }} \\
+          --region ${{ env.REGION }} \\
+          --project ${{ env.GCP_PROJECT }}
+        \`\`\`
+        
+        ## Fingerprint Information
+        
+        This deployment uses dynamic fingerprint generation based on PR #743.
+        Each deployment gets a unique fingerprint to avoid shared quota limits.
+        
+        The fingerprint format: \`android(XXXX.NNNNNN.NNN);bmw;2.20.3;row\`
+        EOF
