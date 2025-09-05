@@ -262,4 +262,4 @@ def bmw_api(request):
                 "error": "Request failed",
                 "message": error_msg,
                 "service": "bmw-api-v0.17.3"
-            }), 500
+            }), 500# Trigger deployment Fri Sep  5 18:45:38 CEST 2025
