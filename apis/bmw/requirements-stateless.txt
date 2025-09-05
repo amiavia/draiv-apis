@@ -1,17 +1,5 @@
-# BMW API Stateless Requirements  
-# UPDATED: Now uses Docker workaround approach with bimmer_connected
-
-# Core dependencies
-flask==3.0.3
-functions-framework==3.8.2
-
-# BMW API library (includes PR #743 fingerprint fix for quota issues)
 bimmer_connected==0.17.3
-
-# Async support
-aiohttp==3.10.10
-asyncio==3.4.3
-
-# Cloud dependencies (if needed)
-google-cloud-storage==2.*
-google-cloud-secret-manager==2.*
+Flask==2.3.2
+flask-cors==3.0.10
+functions-framework
+google-cloud-secret-manager

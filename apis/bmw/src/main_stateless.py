@@ -1,292 +1,251 @@
 """
-BMW API Cloud Function - Production Ready Implementation
-Enhanced with circuit breaker, caching, monitoring, and proper error handling
+BMW API Stateless - No OAuth token storage, fresh authentication every request
+Clean implementation using bimmer_connected 0.17.3
 """
-import os
-import json
 import asyncio
-import logging
-from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
-from pathlib import Path
-
-from flask import Flask, Request, jsonify
+from flask import request, jsonify
 import functions_framework
-from google.cloud import storage, secretmanager
-
-from auth_manager import BMWAuthManager
-from vehicle_manager import BMWVehicleManager
-from remote_services import BMWRemoteServices
-from utils.circuit_breaker import CircuitBreaker
-from utils.cache_manager import CacheManager
-from utils.error_handler import (
-    BMWAPIError, 
-    handle_api_error,
-    ValidationError,
-    AuthenticationError,
-    RemoteServiceError
-)
-
-# Configure structured logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Configuration
-BUCKET_NAME = os.environ.get("BMW_OAUTH_BUCKET", "bmw-api-bucket")
-PROJECT_ID = os.environ.get("GCP_PROJECT", "miavia-422212")
-ENVIRONMENT = os.environ.get("ENVIRONMENT", "production")
-
-# Initialize components
-app = Flask(__name__)
-cache_manager = CacheManager()
-circuit_breaker = CircuitBreaker(
-    failure_threshold=5,
-    recovery_timeout=60,
-    expected_exception=BMWAPIError
-)
-
-class BMWAPIService:
-    """Main service class for BMW API operations"""
-    
-    def __init__(self):
-        self.auth_manager = BMWAuthManager(BUCKET_NAME)
-        self.vehicle_manager = BMWVehicleManager()
-        self.remote_services = BMWRemoteServices()
-        self.metrics = {
-            "requests_total": 0,
-            "requests_success": 0,
-            "requests_failed": 0,
-            "avg_response_time": 0
-        }
-    
-    async def process_request(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process incoming BMW API request with proper error handling and monitoring
-        """
-        start_time = datetime.now()
-        self.metrics["requests_total"] += 1
-        
-        try:
-            # Validate request
-            self._validate_request(data)
-            
-            # Extract parameters
-            email = data["email"]
-            password = data["password"]
-            wkn = data["wkn"]
-            action = data.get("action", "status")
-            hcaptcha_token = data.get("hcaptcha")
-            
-            # Check cache for recent results (for read-only operations)
-            cache_key = f"{email}:{wkn}:{action}"
-            if action in ["status", "fuel", "location", "mileage", "lock_status", "is_locked"]:
-                cached_result = cache_manager.get(cache_key)
-                if cached_result:
-                    logger.info(f"Cache hit for {action} request")
-                    self.metrics["requests_success"] += 1
-                    return cached_result
-            
-            # Authenticate with circuit breaker protection
-            account = await circuit_breaker.call(
-                self.auth_manager.authenticate,
-                email, password, hcaptcha_token
-            )
-            
-            # Get vehicle
-            vehicle = await self.vehicle_manager.get_vehicle(account, wkn)
-            
-            # Process action
-            result = await self._process_action(vehicle, action)
-            
-            # Prepare response
-            response_data = {
-                "success": True,
-                "brand": vehicle.brand,
-                "vehicle_name": vehicle.name,
-                "vin": vehicle.vin,
-                "action": action,
-                "result": result,
-                "timestamp": datetime.now().isoformat(),
-                "environment": ENVIRONMENT
-            }
-            
-            # Cache successful read-only operations
-            if action in ["status", "fuel", "location", "mileage", "lock_status", "is_locked"]:
-                cache_manager.set(cache_key, response_data, ttl=300)  # 5 minutes cache
-            
-            # Update metrics
-            self.metrics["requests_success"] += 1
-            response_time = (datetime.now() - start_time).total_seconds()
-            self._update_avg_response_time(response_time)
-            
-            logger.info(f"Successfully processed {action} request in {response_time:.2f}s")
-            return response_data
-            
-        except ValidationError as e:
-            self.metrics["requests_failed"] += 1
-            logger.warning(f"Validation error: {e}")
-            raise
-        except AuthenticationError as e:
-            self.metrics["requests_failed"] += 1
-            logger.error(f"Authentication error: {e}")
-            raise
-        except Exception as e:
-            self.metrics["requests_failed"] += 1
-            logger.error(f"Unexpected error processing request: {e}", exc_info=True)
-            raise BMWAPIError(f"Failed to process request: {str(e)}")
-    
-    def _validate_request(self, data: Dict[str, Any]) -> None:
-        """Validate incoming request data"""
-        required_fields = ["email", "password", "wkn"]
-        missing_fields = [field for field in required_fields if field not in data]
-        
-        if missing_fields:
-            raise ValidationError(f"Missing required fields: {', '.join(missing_fields)}")
-        
-        # Validate email format
-        email = data.get("email", "")
-        if not email or "@" not in email:
-            raise ValidationError("Invalid email format")
-        
-        # Validate WKN format (should be alphanumeric)
-        wkn = data.get("wkn", "")
-        if not wkn or not wkn.isalnum():
-            raise ValidationError("Invalid WKN format")
-        
-        # Validate action if provided
-        valid_actions = [
-            "status", "lock", "unlock", "flash", "ac", "fuel", 
-            "location", "check_control", "mileage", "lock_status", "is_locked"
-        ]
-        action = data.get("action", "status")
-        if action not in valid_actions:
-            raise ValidationError(f"Invalid action: {action}. Valid actions: {', '.join(valid_actions)}")
-    
-    async def _process_action(self, vehicle: Any, action: str) -> Dict[str, Any]:
-        """Process the requested action on the vehicle"""
-        
-        # Remote control actions
-        if action == "lock":
-            return await self.remote_services.lock_vehicle(vehicle)
-        elif action == "unlock":
-            return await self.remote_services.unlock_vehicle(vehicle)
-        elif action == "flash":
-            return await self.remote_services.flash_lights(vehicle)
-        elif action == "ac":
-            return await self.remote_services.activate_climate(vehicle)
-        
-        # Status queries
-        elif action == "fuel":
-            return self.vehicle_manager.get_fuel_status(vehicle)
-        elif action == "location":
-            return self.vehicle_manager.get_location(vehicle)
-        elif action == "check_control":
-            return self.vehicle_manager.get_check_control_messages(vehicle)
-        elif action == "mileage":
-            return self.vehicle_manager.get_mileage(vehicle)
-        elif action == "lock_status":
-            return self.vehicle_manager.get_lock_status(vehicle)
-        elif action == "is_locked":
-            return self.vehicle_manager.is_locked(vehicle)
-        else:
-            # Default to returning vehicle status
-            return self.vehicle_manager.get_full_status(vehicle)
-    
-    def _update_avg_response_time(self, response_time: float) -> None:
-        """Update average response time metric"""
-        total_requests = self.metrics["requests_success"]
-        if total_requests == 1:
-            self.metrics["avg_response_time"] = response_time
-        else:
-            # Calculate running average
-            current_avg = self.metrics["avg_response_time"]
-            self.metrics["avg_response_time"] = (
-                (current_avg * (total_requests - 1) + response_time) / total_requests
-            )
-    
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get current service metrics"""
-        return {
-            **self.metrics,
-            "circuit_breaker_state": circuit_breaker.state,
-            "cache_size": cache_manager.size(),
-            "timestamp": datetime.now().isoformat()
-        }
-
-# Initialize service
-bmw_service = BMWAPIService()
+from bimmer_connected.account import MyBMWAccount
+from bimmer_connected.api.regions import Regions
+from bimmer_connected.vehicle.remote_services import RemoteServices
 
 @functions_framework.http
-def bmw_api(request: Request):
+def bmw_api(request):
     """
-    Main Cloud Function entry point for BMW API
+    BMW API Cloud Function - Completely stateless version
+    Requires hCaptcha token for every request
     """
-    # Handle CORS preflight
+    # Handle CORS
     if request.method == "OPTIONS":
         headers = {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "POST, GET",
             "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Max-Age": "3600"
         }
         return ("", 204, headers)
     
-    # Handle health check
+    # Health check endpoint
     if request.method == "GET" and request.path == "/health":
         return jsonify({
             "status": "healthy",
-            "service": "bmw-api",
-            "version": "2.0.0",
-            "environment": ENVIRONMENT,
-            "metrics": bmw_service.get_metrics()
-        })
+            "service": "bmw-api-stateless",
+            "version": "1.0.0",
+            "library": "bimmer_connected==0.17.3",
+            "features": {
+                "stateless": True,
+                "oauth_storage": "disabled",
+                "hcaptcha_required": True
+            }
+        }), 200, {"Access-Control-Allow-Origin": "*"}
     
-    # Handle metrics endpoint
-    if request.method == "GET" and request.path == "/metrics":
-        return jsonify(bmw_service.get_metrics())
-    
-    # Process BMW API request
+    # Parse request
     try:
-        # Parse request data
         data = request.get_json()
         if not data:
-            raise ValidationError("Request body must be valid JSON")
+            return jsonify({"error": "Request must be JSON"}), 400
+            
+        # Required fields
+        email = data.get("email")
+        password = data.get("password")
+        wkn = data.get("wkn")
+        hcaptcha_token = data.get("hcaptcha")
         
-        # Process request asynchronously
-        result = asyncio.run(bmw_service.process_request(data))
+        if not all([email, password, wkn, hcaptcha_token]):
+            return jsonify({
+                "error": "Missing required fields",
+                "required": ["email", "password", "wkn", "hcaptcha"],
+                "message": "hCaptcha token is required for every request in stateless mode"
+            }), 400
+            
+    except Exception as e:
+        return jsonify({"error": f"Invalid request: {str(e)}"}), 400
+    
+    # Optional fields
+    action = data.get("action", "status")
+    
+    print(f"📋 Processing stateless BMW API request: action={action}, vehicle={wkn}")
+    
+    try:
+        # Always authenticate fresh with hCaptcha
+        print(f"🔐 Fresh authentication for {email} with hCaptcha...")
+        account = MyBMWAccount(email, password, Regions.REST_OF_WORLD, hcaptcha_token=hcaptcha_token)
+        
+        # Get vehicles (this triggers authentication)
+        print("🚗 Fetching vehicles...")
+        asyncio.run(account.get_vehicles())
+        
+        # Find target vehicle
+        vehicle = account.get_vehicle(wkn)
+        if not vehicle:
+            return jsonify({
+                "error": f"Vehicle {wkn} not found",
+                "available_vehicles": [v.vin for v in account.vehicles]
+            }), 404
+        
+        # Build base response
+        response = {
+            "success": True,
+            "vehicle": {
+                "brand": vehicle.brand,
+                "name": vehicle.name,
+                "vin": vehicle.vin,
+                "model": getattr(vehicle, "model", "Unknown")
+            },
+            "action": action
+        }
+        
+        # Process actions
+        if action == "status":
+            # Get comprehensive status
+            response["result"] = {
+                "doors_locked": vehicle.doors_windows.lock_state.value if hasattr(vehicle, "doors_windows") else None,
+                "mileage": {
+                    "value": vehicle.mileage.value if hasattr(vehicle.mileage, "value") else vehicle.mileage,
+                    "unit": vehicle.mileage.unit if hasattr(vehicle.mileage, "unit") else "km"
+                },
+                "fuel": {
+                    "remaining_percent": vehicle.fuel_and_battery.remaining_fuel_percent if hasattr(vehicle, "fuel_and_battery") else None,
+                    "remaining_range": vehicle.fuel_and_battery.remaining_range_total if hasattr(vehicle, "fuel_and_battery") else None
+                },
+                "location": {
+                    "latitude": vehicle.location.location.latitude if hasattr(vehicle, "location") and vehicle.location and vehicle.location.location else None,
+                    "longitude": vehicle.location.location.longitude if hasattr(vehicle, "location") and vehicle.location and vehicle.location.location else None
+                }
+            }
+            
+        elif action == "lock":
+            print("🔒 Sending lock command...")
+            remote_services = RemoteServices(vehicle)
+            result = asyncio.run(remote_services.trigger_remote_door_lock())
+            response["result"] = {
+                "command": "lock",
+                "status": "initiated",
+                "message": "Lock command sent successfully"
+            }
+            
+        elif action == "unlock":
+            print("🔓 Sending unlock command...")
+            remote_services = RemoteServices(vehicle)
+            result = asyncio.run(remote_services.trigger_remote_door_unlock())
+            response["result"] = {
+                "command": "unlock",
+                "status": "initiated",
+                "message": "Unlock command sent successfully"
+            }
+            
+        elif action == "flash":
+            print("💡 Sending flash lights command...")
+            remote_services = RemoteServices(vehicle)
+            result = asyncio.run(remote_services.trigger_remote_light_flash())
+            response["result"] = {
+                "command": "flash",
+                "status": "initiated",
+                "message": "Flash lights command sent successfully"
+            }
+            
+        elif action == "climate" or action == "ac":
+            print("❄️ Sending climate control command...")
+            remote_services = RemoteServices(vehicle)
+            result = asyncio.run(remote_services.trigger_remote_air_conditioning())
+            response["result"] = {
+                "command": "climate",
+                "status": "initiated",
+                "message": "Climate control command sent successfully"
+            }
+            
+        elif action == "location":
+            location = vehicle.location
+            if location and location.location:
+                response["result"] = {
+                    "latitude": location.location.latitude,
+                    "longitude": location.location.longitude,
+                    "heading": location.heading,
+                    "timestamp": location.vehicle_update_timestamp.isoformat() if location.vehicle_update_timestamp else None
+                }
+            else:
+                response["result"] = {"error": "Location not available"}
+                
+        elif action == "fuel":
+            fuel = vehicle.fuel_and_battery
+            if fuel:
+                response["result"] = {
+                    "remaining_fuel": fuel.remaining_fuel,
+                    "remaining_fuel_percent": fuel.remaining_fuel_percent,
+                    "remaining_range_fuel": fuel.remaining_range_fuel,
+                    "remaining_range_electric": fuel.remaining_range_electric,
+                    "remaining_range_total": fuel.remaining_range_total
+                }
+            else:
+                response["result"] = {"error": "Fuel data not available"}
+                
+        elif action == "mileage":
+            mileage = vehicle.mileage
+            response["result"] = {
+                "value": mileage.value if hasattr(mileage, "value") else mileage,
+                "unit": mileage.unit if hasattr(mileage, "unit") else "km"
+            }
+            
+        elif action == "lock_status":
+            lock_state = vehicle.doors_windows.lock_state if hasattr(vehicle, "doors_windows") else None
+            response["result"] = lock_state.value if lock_state and hasattr(lock_state, "value") else "Unknown"
+            
+        elif action == "is_locked":
+            lock_state = vehicle.doors_windows.lock_state if hasattr(vehicle, "doors_windows") else None
+            if lock_state and hasattr(lock_state, "value"):
+                if lock_state.value == "LOCKED":
+                    response["result"] = "locked"
+                elif lock_state.value == "UNLOCKED":
+                    response["result"] = "unlocked"
+                else:
+                    response["result"] = f"Intermediate state: {lock_state.value}"
+            else:
+                response["result"] = "Unknown"
+                
+        elif action == "check_control":
+            report = vehicle.check_control_message_report
+            response["result"] = {
+                "has_check_control_messages": report.has_check_control_messages if report else False,
+                "messages": [msg.to_dict() for msg in report.messages] if report and report.messages else []
+            }
+            
+        else:
+            response["result"] = {"error": f"Unknown action: {action}"}
         
         # Return successful response
-        headers = {"Access-Control-Allow-Origin": "*"}
-        return (jsonify(result), 200, headers)
+        return jsonify(response), 200, {"Access-Control-Allow-Origin": "*"}
         
-    except ValidationError as e:
-        return handle_api_error(e, 400)
-    except AuthenticationError as e:
-        return handle_api_error(e, 401)
-    except RemoteServiceError as e:
-        return handle_api_error(e, 503)
-    except BMWAPIError as e:
-        return handle_api_error(e, 500)
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        return handle_api_error(
-            BMWAPIError(f"Internal server error: {str(e)}"), 
-            500
-        )
+        error_msg = str(e)
+        print(f"❌ Error: {error_msg}")
+        
+        # Determine error type and response
+        if "unauthorized" in error_msg.lower() or "401" in error_msg:
+            return jsonify({
+                "error": "Authentication failed",
+                "message": "Invalid credentials or hCaptcha token",
+                "hint": "Ensure hCaptcha token is valid and credentials are correct"
+            }), 401
+        elif "429" in error_msg or "quota" in error_msg.lower():
+            return jsonify({
+                "error": "Rate limited",
+                "message": "BMW API quota exceeded",
+                "hint": "Please try again later"
+            }), 429
+        elif "hcaptcha" in error_msg.lower():
+            return jsonify({
+                "error": "hCaptcha required",
+                "message": "Valid hCaptcha token is required for stateless authentication",
+                "hint": "Provide 'hcaptcha' field with valid token"
+            }), 400
+        else:
+            return jsonify({
+                "error": "Request failed",
+                "message": error_msg,
+                "service": "bmw-api-stateless"
+            }), 500
 
-# Local development server
 if __name__ == "__main__":
-    import sys
-    
-    # Set up local environment
-    os.environ["ENVIRONMENT"] = "development"
-    
-    # Run Flask app
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080)),
-        debug=True
-    )
+    # Local testing
+    from flask import Flask
+    app = Flask(__name__)
+    app.run(debug=True, port=8080)

@@ -71,8 +71,8 @@ jobs:
         # Create deployment directory
         mkdir -p deploy_package
         
-        # Copy implementation using bimmer_connected v0.17.3 with built-in fix
-        cp apis/bmw/src/main_bmw_simple_v17.py deploy_package/main.py
+        # Copy the stateless implementation
+        cp apis/bmw/src/main_stateless.py deploy_package/main.py
         
         # Copy requirements
         cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
@@ -181,8 +181,8 @@ jobs:
         # Create deployment directory
         mkdir -p deploy_package
         
-        # Copy implementation using bimmer_connected v0.17.3 with built-in fix
-        cp apis/bmw/src/main_bmw_simple_v17.py deploy_package/main.py
+        # Copy the stateless implementation
+        cp apis/bmw/src/main_stateless.py deploy_package/main.py
         
         # Copy requirements
         cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
