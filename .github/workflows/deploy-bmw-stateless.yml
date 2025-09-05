@@ -6,6 +6,7 @@ on:
     paths:
       - 'apis/bmw/src/main_stateless.py'
       - 'apis/bmw/src/main_fixed_complete.py'
+      - 'apis/bmw/src/main_bmw_simple_v17.py'
       - 'apis/bmw/src/fingerprint_patch.py'
       - 'apis/bmw/requirements-stateless.txt'
       - '.github/workflows/deploy-bmw-stateless.yml'
