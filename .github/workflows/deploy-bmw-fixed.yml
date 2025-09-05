@@ -44,7 +44,7 @@ jobs:
           --timeout 300s \
           --memory 512MB \
           --max-instances 100 \
-          --set-env-vars ENVIRONMENT=production,K_SERVICE=${{ env.FUNCTION_NAME }}
+          --set-env-vars ENVIRONMENT=production
     
     - name: Get Function URL
       run: |
