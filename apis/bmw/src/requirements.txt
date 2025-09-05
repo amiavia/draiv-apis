@@ -1,0 +1,22 @@
+# BMW API Requirements
+# Production dependencies for BMW Connected Drive API
+
+# Core dependencies
+bimmer-connected==0.17.2
+flask==3.0.3
+functions-framework==3.8.2
+
+# Google Cloud dependencies
+google-cloud-storage==2.18.2
+google-cloud-secret-manager==2.20.2
+
+# Async support
+aiohttp==3.10.10
+asyncio==3.4.3
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.10.3
+
+# JSON and data handling
+orjson==3.10.12
