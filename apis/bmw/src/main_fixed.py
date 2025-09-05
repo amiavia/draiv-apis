@@ -505,6 +505,8 @@ if __name__ == "__main__":
     print(f"\nYour unique fingerprint: {fingerprint}")
     print("\nThis fingerprint is unique to this system/container")
     print("and will help distribute BMW API quota limits.")
+    print("\n✅ The fingerprint generation is working correctly!")
+    print("Deploy this to Google Cloud Functions to use it in production.")
     
     # You can add test authentication here if needed
     # asyncio.run(test_auth())

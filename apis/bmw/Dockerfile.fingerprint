@@ -1,0 +1,32 @@
+# BMW API with Dynamic Fingerprint - Docker Image
+# Based on PR #743 implementation
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements-fingerprint.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-fingerprint.txt
+
+# Copy source code
+COPY src/main_fingerprint.py .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+ENV BMW_REGION=rest_of_world
+
+# Expose port
+EXPOSE 8080
+
+# Run the application with functions-framework
+CMD exec functions-framework --target=bmw_api_fingerprint --port=${PORT}
