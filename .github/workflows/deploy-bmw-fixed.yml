@@ -12,7 +12,6 @@ on:
 env:
   FUNCTION_NAME: bmw_api_fixed
   REGION: europe-west6
-  RUNTIME: python311
   GCP_PROJECT: miavia-422212
 
 jobs:
@@ -30,21 +29,25 @@ jobs:
     - name: Setup Google Cloud SDK
       uses: google-github-actions/setup-gcloud@v1
     
+    - name: Prepare deployment
+      run: |
+        cd apis/bmw
+        # Copy the fixed implementation to main.py for deployment
+        cp src/main_fixed.py main.py
+        # Ensure requirements.txt is in the right place
+        cp requirements.txt .
+    
     - name: Deploy Fixed BMW API
+      working-directory: apis/bmw
       run: |
         gcloud functions deploy ${{ env.FUNCTION_NAME }} \
           --gen2 \
-          --runtime ${{ env.RUNTIME }} \
+          --runtime python310 \
+          --region ${{ env.REGION }} \
           --trigger-http \
           --allow-unauthenticated \
           --entry-point bmw_api_fixed \
-          --source apis/bmw/src \
-          --region ${{ env.REGION }} \
-          --project ${{ env.GCP_PROJECT }} \
-          --timeout 300s \
-          --memory 512MB \
-          --max-instances 100 \
-          --set-env-vars ENVIRONMENT=production
+          --source .
     
     - name: Get Function URL
       run: |
