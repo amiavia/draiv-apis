@@ -1,10 +1,17 @@
-# BMW API Stateless Requirements
-# Direct BMW API implementation (bypasses bimmer-connected)
+# BMW API Stateless Requirements  
+# UPDATED: Now uses Docker workaround approach with bimmer_connected
 
 # Core dependencies
 flask==3.0.3
 functions-framework==3.8.2
 
-# Async support for direct API calls
+# BMW API library (with Android patch applied)
+bimmer_connected==0.14.*
+
+# Async support
 aiohttp==3.10.10
 asyncio==3.4.3
+
+# Cloud dependencies (if needed)
+google-cloud-storage==2.*
+google-cloud-secret-manager==2.*

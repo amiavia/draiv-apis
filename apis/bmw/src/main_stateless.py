@@ -1,391 +1,341 @@
 """
-BMW API Stateless Cloud Function - DIRECT IMPLEMENTATION
-=========================================================
-CRITICAL FIX: This bypasses bimmer_connected library entirely
-and implements BMW authentication directly to avoid quota issues.
+BMW API Stateless - Docker Workaround + bimmer_connected
+========================================================
+UPDATED: Now uses proven Docker workaround approach with bimmer_connected.
+Applies Android fingerprint patch then uses standard bimmer_connected authentication.
+
+This replaces the manual OAuth PKCE implementation with:
+- Android patch applied first (Docker workaround approach)
+- Standard bimmer_connected authentication (proven library)
+- Each deployment gets unique android() fingerprint for quota isolation
 """
 
 import asyncio
 import json
-import aiohttp
-import hashlib
-import uuid
+import logging
+import os
 import functions_framework
-from flask import jsonify, Response
-from datetime import datetime, timedelta
+from flask import jsonify
+from datetime import datetime
 from typing import Dict, Any, Optional
-import secrets
-import base64
-import re
 
-# BMW API Configuration - Updated to match bimmer_connected implementation
-BMW_SERVER_URL = "https://cocoapi.bmwgroup.com"  # Rest of World server
-OAUTH_CONFIG_PATH = "/eadrax-ucs/v1/presentation/oauth/config"
-BMW_CLIENT_ID = "dbf0a542-ebd1-4ff0-a9a7-55172fbfce35"
+# CRITICAL: Apply Android patch BEFORE importing bimmer_connected
+# This replicates the Docker workaround approach
+try:
+    from utils.bmw_android_patch import apply_android_patch, get_patch_info
+    patch_success = apply_android_patch()
+    print(f"🔧 Android patch result: {'✅ Success' if patch_success else '❌ Failed'}")
+except Exception as e:
+    print(f"⚠️ Android patch error: {e}")
+    patch_success = False
 
-def _get_system_uuid() -> str:
+# NOW import bimmer_connected (after patch is applied)
+try:
+    from bimmer_connected.account import MyBMWAccount
+    from bimmer_connected.api.regions import Regions
+    print("✅ bimmer_connected imported successfully")
+except ImportError as e:
+    print(f"❌ Failed to import bimmer_connected: {e}")
+    MyBMWAccount = None
+    Regions = None
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+async def authenticate_bmw_simple(email: str, password: str, hcaptcha_token: Optional[str] = None) -> Dict[str, Any]:
     """
-    Get system UUID exactly as PR #743 does, adapted for Cloud Functions
-    Replicate bimmer_connected PR #743 _get_system_uuid() function
-    """
-    import os
-    import platform
+    Simple BMW authentication using bimmer_connected library (with Android patch applied)
     
-    # For Cloud Functions, create a stable ID based on function metadata
-    # This ensures same x-user-agent across requests in same deployment
-    function_name = os.environ.get('K_SERVICE', 'bmw_api_stateless')
-    function_revision = os.environ.get('K_REVISION', 'default')
-    region = os.environ.get('FUNCTION_REGION', 'europe-west6')
-    
-    # Create stable system identifier for this Cloud Function deployment
-    stable_id = f"{function_name}-{function_revision}-{region}"
-    
-    # Try to get actual system UUID as fallback (PR #743 method)
-    try:
-        system = platform.system().lower()
-        if system == 'linux':
-            # Try to read machine-id (PR #743 method)
-            try:
-                with open('/etc/machine-id', 'r') as f:
-                    machine_id = f.read().strip()
-                if machine_id:
-                    return machine_id
-            except:
-                pass
-                
-        # Fallback to MAC address (PR #743 fallback)
-        mac_address = uuid.getnode()
-        if mac_address:
-            return str(mac_address)
-            
-    except:
-        pass
+    Args:
+        email: BMW account email
+        password: BMW account password  
+        hcaptcha_token: Optional hCaptcha token
         
-    # Final fallback: use our stable Cloud Function ID
-    return stable_id
-
-def generate_user_agent() -> str:
-    """
-    Generate x-user-agent exactly as PR #743 does
-    Replicate bimmer_connected PR #743 user agent generation
-    """
-    
-    # Get system UUID using PR #743 method
-    system_uuid = _get_system_uuid()
-    
-    # Use SHA1 as PR #743 does (not SHA256)
-    digest = hashlib.sha1(system_uuid.encode()).hexdigest().upper()
-    print(f"🔧 System UUID: {system_uuid}")
-    print(f"🔧 SHA1 digest: {digest}")
-    
-    # Extract numeric digits from hash (PR #743 method)
-    numeric_chars = re.findall(r'\d', digest)
-    if len(numeric_chars) < 9:
-        # Pad with zeros if not enough digits
-        numeric_chars.extend(['0'] * (9 - len(numeric_chars)))
-    
-    # Create build string components
-    middle_part = ''.join(numeric_chars[:6])
-    build_part = ''.join(numeric_chars[6:9])
-    
-    # Platform-specific prefix (PR #743 approach)
-    import platform
-    system = platform.system().lower()
-    if system == 'linux':
-        prefix = 'LP1A'
-    elif system == 'darwin':  # macOS
-        prefix = 'DP1A'
-    elif system == 'windows':
-        prefix = 'WP1A'
-    else:
-        prefix = 'XP1A'
-    
-    # Build string in PR #743 format
-    build_string = f"{prefix}.{middle_part}.{build_part}"
-    
-    # Return full user agent matching BMW + PR #743 expectations
-    user_agent = f"android({build_string});bmw;2.20.3;row"
-    print(f"🔧 Generated PR #743 user agent: {user_agent}")
-    return user_agent
-
-async def get_oauth_settings() -> Dict[str, Any]:
-    """Get OAuth settings from BMW API"""
-    headers = {
-        'ocp-apim-subscription-key': '4f1c85a3-758f-a37d-bbb6-f8704494acfa',  # REST_OF_WORLD key
-        'x-user-agent': generate_user_agent(),
-        'user-agent': 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36'
-    }
-    
-    oauth_config_url = f"{BMW_SERVER_URL}{OAUTH_CONFIG_PATH}"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(oauth_config_url, headers=headers) as response:
-            if response.status == 200:
-                return await response.json()
-            else:
-                raise Exception(f"Failed to get OAuth settings: {response.status}")
-
-def generate_pkce_pair() -> tuple:
-    """Generate PKCE code verifier and challenge"""
-    
-    # Generate random code verifier
-    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
-    
-    # Generate code challenge using S256 method
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode()).digest()
-    ).decode('utf-8').rstrip('=')
-    
-    return code_verifier, code_challenge
-
-async def authenticate_bmw(email: str, password: str, hcaptcha_token: str) -> Dict[str, Any]:
-    """
-    Authenticate with BMW API using OAuth Authorization Code flow with PKCE
-    Following bimmer_connected PR #743 implementation
-    
     Returns:
-        Dict with access_token and refresh_token or error
+        Dict with success status and account or error
     """
     try:
-        # Step 1: Get OAuth configuration
-        print("🚀 Step 1: Getting OAuth configuration...")
-        oauth_settings = await get_oauth_settings()
+        print(f"🔐 Docker workaround authentication for {email}...")
         
-        auth_endpoint = oauth_settings.get('authenticateEndpoint')
-        token_endpoint = oauth_settings.get('tokenEndpoint')
-        
-        if not auth_endpoint or not token_endpoint:
+        if not MyBMWAccount:
             return {
                 'success': False,
-                'error': 'Missing OAuth endpoints in configuration'
+                'error': 'bimmer_connected library not available'
             }
         
-        # Step 2: Generate PKCE parameters
-        print("🔧 Step 2: Generating PKCE parameters...")
-        code_verifier, code_challenge = generate_pkce_pair()
-        state = str(uuid.uuid4())
-        nonce = str(uuid.uuid4())
-        session_id = str(uuid.uuid4())
+        # Create BMW account using standard bimmer_connected approach
+        # The Android patch ensures BMW sees our unique fingerprint
+        print("🚗 Creating MyBMWAccount with Docker workaround patch...")
+        account = MyBMWAccount(
+            username=email,
+            password=password,
+            region=Regions.REST_OF_WORLD,
+            hcaptcha_token=hcaptcha_token
+        )
         
-        # Step 3: Authenticate to get authorization code
-        print("🔐 Step 3: Authenticating to get authorization code...")
+        # Test authentication by getting vehicles
+        print("📋 Testing authentication by fetching vehicles...")
+        vehicles = await account.get_vehicles()
         
-        auth_headers = {
-            'ocp-apim-subscription-key': '4f1c85a3-758f-a37d-bbb6-f8704494acfa',  # REST_OF_WORLD key
-            'bmw-session-id': session_id,
-            'x-user-agent': generate_user_agent(),
-            'user-agent': 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
-            'content-type': 'application/x-www-form-urlencoded',
-            'accept': 'application/json',
-            'hcaptchatoken': hcaptcha_token
+        print(f"✅ Authentication successful! Found {len(vehicles)} vehicles")
+        return {
+            'success': True,
+            'account': account,
+            'vehicles_count': len(vehicles)
         }
         
-        auth_data = {
-            'client_id': BMW_CLIENT_ID,
-            'response_type': 'code',
-            'redirect_uri': 'com.bmw.connected://oauth',
-            'scope': 'authenticate_user vehicle_data remote_services',
-            'state': state,
-            'nonce': nonce,
-            'code_challenge': code_challenge,
-            'code_challenge_method': 'S256',
-            'username': email,
-            'password': password
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                auth_endpoint,
-                data=auth_data,
-                headers=auth_headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                print(f"📡 Auth response status: {response.status}")
-                auth_response_text = await response.text()
-                print(f"📡 Auth response: {auth_response_text}")
-                
-                if response.status != 200:
-                    return {
-                        'success': False,
-                        'error': auth_response_text,
-                        'status': response.status
-                    }
-                
-                # Parse authorization code from response
-                auth_result = json.loads(auth_response_text)
-                authorization_code = auth_result.get('authorization_code')
-                
-                if not authorization_code:
-                    return {
-                        'success': False,
-                        'error': 'No authorization code in response',
-                        'response': auth_result
-                    }
-        
-        # Step 4: Exchange authorization code for tokens
-        print("🎟️ Step 4: Exchanging code for tokens...")
-        
-        token_headers = {
-            'ocp-apim-subscription-key': '4f1c85a3-758f-a37d-bbb6-f8704494acfa',
-            'bmw-session-id': session_id,
-            'x-user-agent': generate_user_agent(),
-            'content-type': 'application/x-www-form-urlencoded'
-        }
-        
-        token_data = {
-            'client_id': BMW_CLIENT_ID,
-            'grant_type': 'authorization_code',
-            'code': authorization_code,
-            'redirect_uri': 'com.bmw.connected://oauth',
-            'code_verifier': code_verifier
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                token_endpoint,
-                data=token_data,
-                headers=token_headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                print(f"📡 Token response status: {response.status}")
-                token_response_text = await response.text()
-                print(f"📡 Token response: {token_response_text}")
-                
-                if response.status == 200:
-                    tokens = json.loads(token_response_text)
-                    print("✅ OAuth authentication successful!")
-                    return {
-                        'success': True,
-                        'access_token': tokens.get('access_token'),
-                        'refresh_token': tokens.get('refresh_token'),
-                        'expires_in': tokens.get('expires_in', 3600)
-                    }
-                else:
-                    return {
-                        'success': False,
-                        'error': token_response_text,
-                        'status': response.status
-                    }
-                    
     except Exception as e:
+        print(f"❌ Authentication failed: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        }
+
+
+async def get_vehicles_simple(account: MyBMWAccount) -> Dict[str, Any]:
+    """
+    Get vehicles using bimmer_connected account
+    
+    Args:
+        account: Authenticated MyBMWAccount instance
+        
+    Returns:
+        Dict with vehicles list or error
+    """
+    try:
+        print("🚗 Fetching vehicles...")
+        vehicles = await account.get_vehicles()
+        
+        # Convert vehicles to serializable format
+        vehicles_data = []
+        for vehicle in vehicles:
+            vehicle_data = {
+                'vin': vehicle.vin,
+                'name': vehicle.name,
+                'brand': vehicle.brand,
+                'model': getattr(vehicle, 'model', 'Unknown'),
+                'year': getattr(vehicle, 'year', 'Unknown'),
+            }
+            vehicles_data.append(vehicle_data)
+        
+        return {
+            'success': True,
+            'vehicles': vehicles_data,
+            'count': len(vehicles_data)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error fetching vehicles: {e}")
         return {
             'success': False,
             'error': str(e)
         }
 
-async def get_vehicles(access_token: str) -> Dict[str, Any]:
-    """Get vehicles from BMW API"""
-    headers = {
-        'authorization': f'Bearer {access_token}',
-        'x-user-agent': generate_user_agent(),
-        'accept': 'application/json'
-    }
-    
-    vehicles_url = f"{BMW_SERVER_URL}/eadrax-vcs/v5/vehicle-list"
-    
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(
-                vehicles_url,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    vehicles = await response.json()
-                    return {
-                        'success': True,
-                        'vehicles': vehicles
-                    }
-                else:
-                    return {
-                        'success': False,
-                        'error': f'Failed to get vehicles: {response.status}'
-                    }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e)
-            }
 
-async def execute_remote_service(access_token: str, vin: str, service: str) -> Dict[str, Any]:
-    """Execute remote service on vehicle"""
-    service_map = {
-        'lock': 'door-lock',
-        'unlock': 'door-unlock',
-        'flash': 'light-flash',
-        'climate': 'climate-now'
-    }
+async def execute_remote_service_simple(account: MyBMWAccount, vin: str, service: str) -> Dict[str, Any]:
+    """
+    Execute remote service using bimmer_connected
     
-    service_endpoint = service_map.get(service, service)
-    # Map our service endpoints to BMW's remote command types
-    service_map = {
-        'lock': 'door-lock',
-        'unlock': 'door-unlock',
-        'flash': 'light-flash',
-        'honk': 'horn-blow',
-        'climate': 'climate-now'
-    }
-    service_type = service_map.get(service_endpoint, service_endpoint)
-    url = f"{BMW_SERVER_URL}/eadrax-vrccs/v4/presentation/remote-commands/{service_type}"
-    
-    headers = {
-        'authorization': f'Bearer {access_token}',
-        'x-user-agent': generate_user_agent(),
-        'accept': 'application/json',
-        'content-type': 'application/json'
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(
-                url,
-                headers=headers,
-                json={},
-                timeout=aiohttp.ClientTimeout(total=60)
-            ) as response:
-                if response.status in [200, 201, 202]:
-                    return {
-                        'success': True,
-                        'message': f'Remote service {service} initiated'
-                    }
-                else:
-                    return {
-                        'success': False,
-                        'error': f'Remote service failed: {response.status}'
-                    }
-        except Exception as e:
+    Args:
+        account: Authenticated MyBMWAccount instance
+        vin: Vehicle identification number
+        service: Service to execute (lock, unlock, flash, etc.)
+        
+    Returns:
+        Dict with service result or error
+    """
+    try:
+        print(f"🔧 Executing {service} on vehicle {vin}...")
+        
+        # Find the vehicle
+        vehicles = await account.get_vehicles()
+        target_vehicle = None
+        
+        for vehicle in vehicles:
+            if vehicle.vin == vin:
+                target_vehicle = vehicle
+                break
+        
+        if not target_vehicle:
             return {
                 'success': False,
-                'error': str(e)
+                'error': f'Vehicle {vin} not found'
             }
+        
+        # Execute the service based on type
+        if service == 'lock':
+            await target_vehicle.remote_services.trigger_remote_door_lock()
+            message = 'Vehicle locked successfully'
+        elif service == 'unlock':
+            await target_vehicle.remote_services.trigger_remote_door_unlock()
+            message = 'Vehicle unlocked successfully'
+        elif service == 'flash':
+            await target_vehicle.remote_services.trigger_remote_light_flash()
+            message = 'Lights flashed successfully'
+        elif service == 'horn':
+            await target_vehicle.remote_services.trigger_remote_horn()
+            message = 'Horn activated successfully'
+        elif service == 'climate':
+            await target_vehicle.remote_services.trigger_remote_air_conditioning()
+            message = 'Climate control activated successfully'
+        else:
+            return {
+                'success': False,
+                'error': f'Unknown service: {service}'
+            }
+        
+        print(f"✅ Service {service} executed successfully")
+        return {
+            'success': True,
+            'service': service,
+            'vehicle': vin,
+            'message': message
+        }
+        
+    except Exception as e:
+        print(f"❌ Error executing service {service}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'service': service,
+            'vehicle': vin
+        }
+
+
+async def get_vehicle_status_simple(account: MyBMWAccount, vin: str) -> Dict[str, Any]:
+    """
+    Get vehicle status using bimmer_connected
+    
+    Args:
+        account: Authenticated MyBMWAccount instance
+        vin: Vehicle identification number
+        
+    Returns:
+        Dict with vehicle status or error
+    """
+    try:
+        print(f"📊 Getting status for vehicle {vin}...")
+        
+        # Find the vehicle
+        vehicles = await account.get_vehicles()
+        target_vehicle = None
+        
+        for vehicle in vehicles:
+            if vehicle.vin == vin:
+                target_vehicle = vehicle
+                break
+        
+        if not target_vehicle:
+            return {
+                'success': False,
+                'error': f'Vehicle {vin} not found'
+            }
+        
+        # Get basic vehicle info
+        status = {
+            'vin': target_vehicle.vin,
+            'name': target_vehicle.name,
+            'brand': target_vehicle.brand,
+            'model': getattr(target_vehicle, 'model', 'Unknown'),
+        }
+        
+        # Try to get additional status if available
+        try:
+            if hasattr(target_vehicle, 'fuel_and_battery'):
+                fuel_battery = target_vehicle.fuel_and_battery
+                status['fuel'] = {
+                    'level': getattr(fuel_battery, 'remaining_fuel_percent', None),
+                    'range': getattr(fuel_battery, 'remaining_range_fuel', None)
+                }
+        except:
+            pass
+        
+        try:
+            if hasattr(target_vehicle, 'vehicle_location'):
+                location = target_vehicle.vehicle_location
+                status['location'] = {
+                    'latitude': getattr(location, 'latitude', None),
+                    'longitude': getattr(location, 'longitude', None),
+                    'address': getattr(location, 'address', None)
+                }
+        except:
+            pass
+        
+        try:
+            if hasattr(target_vehicle, 'doors_and_windows'):
+                doors = target_vehicle.doors_and_windows
+                status['doors'] = {
+                    'locked': getattr(doors, 'door_lock_state', None),
+                }
+        except:
+            pass
+        
+        return {
+            'success': True,
+            'vehicle_status': status
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting vehicle status: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
 
 @functions_framework.http
 def bmw_api(request):
     """
-    CRITICAL FIX: Direct BMW API implementation
-    Bypasses bimmer_connected library quota issues
+    BMW API Stateless - Now using Docker workaround approach with bimmer_connected
+    
+    UPDATED: Replaced manual OAuth PKCE with proven Docker workaround + bimmer_connected
     """
     
     # Handle CORS
     if request.method == "OPTIONS":
         headers = {
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST",
+            "Access-Control-Allow-Methods": "POST, GET",
             "Access-Control-Allow-Headers": "Content-Type",
         }
         return ("", 204, headers)
+    
+    # Health check endpoint  
+    if request.method == "GET" and request.path == "/health":
+        patch_info = get_patch_info()
+        health_data = {
+            "status": "healthy",
+            "service": "bmw-api-stateless",
+            "version": "2.0.0",
+            "implementation": "docker_workaround_with_bimmer_connected",
+            "patch_info": patch_info,
+            "bimmer_connected_available": MyBMWAccount is not None,
+            "timestamp": datetime.utcnow().isoformat(),
+            "message": "Updated to use Docker workaround approach"
+        }
+        return jsonify(health_data)
     
     # Parse request
     try:
         data = request.get_json()
         
-        required_fields = ["email", "password", "wkn", "hcaptcha"]
+        if not data:
+            return jsonify({
+                "error": "Request body must be valid JSON"
+            }), 400
+        
+        # Check required fields - make hcaptcha optional for testing
+        required_fields = ["email", "password", "wkn"]
         missing_fields = [field for field in required_fields if field not in data or not data[field]]
         
         if missing_fields:
             return jsonify({
                 "error": f"Missing required fields: {', '.join(missing_fields)}",
-                "required": required_fields
+                "required": required_fields,
+                "optional": ["hcaptcha", "action"]
             }), 400
             
     except Exception as e:
@@ -394,123 +344,141 @@ def bmw_api(request):
             "details": str(e)
         }), 400
     
+    # Extract parameters
     email = data["email"]
     password = data["password"]
-    wkn = data["wkn"]
-    hcaptcha_token = data["hcaptcha"]
+    wkn = data["wkn"] 
     action = data.get("action", "status")
+    hcaptcha_token = data.get("hcaptcha")
     
-    print(f"🔑 DIRECT API authentication for {email}...")
-    print(f"📝 hCaptcha token (first 50 chars): {hcaptcha_token[:50]}...")
+    print(f"🚗 Processing BMW API Stateless (Docker Workaround) request...")
+    print(f"📧 Email: {email}")
+    print(f"📋 Action: {action}")
+    print(f"🎯 WKN: {wkn}")
+    print(f"🔧 Android patch: {'✅ Applied' if patch_success else '❌ Failed'}")
+    
+    # Create event loop for async operations
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
     try:
-        # Create event loop for async operations
-        print("🔧 EXTREME DEBUG: Creating event loop...")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Step 1: Authenticate with BMW
-        print("🚀 EXTREME DEBUG: Step 1: Authenticating with BMW...")
-        print(f"🔧 EXTREME DEBUG: About to call authenticate_bmw function...")
-        auth_result = loop.run_until_complete(
-            authenticate_bmw(email, password, hcaptcha_token)
-        )
-        print(f"🔧 EXTREME DEBUG: authenticate_bmw returned: {auth_result}")
-        
-        if not auth_result.get('success'):
-            error_msg = auth_result.get('error', 'Unknown error')
-            status_code = auth_result.get('status', 'unknown')
-            print(f"❌ Authentication failed: {error_msg}")
+        async def process_request():
+            # Step 1: Authenticate with BMW (using patched bimmer_connected)
+            print("🔐 Step 1: Authenticating with Docker workaround...")
+            auth_result = await authenticate_bmw_simple(email, password, hcaptcha_token)
             
-            # Return raw BMW error response for debugging
-            return jsonify({
-                "error": "BMW Authentication Failed",
-                "bmw_raw_error": str(error_msg),
-                "bmw_status_code": status_code,
-                "auth_result_full": auth_result,
-                "implementation": "direct_api",
-                "debug_info": "Raw BMW API response for troubleshooting"
-            }), 401
+            if not auth_result['success']:
+                return {
+                    "error": "Authentication failed",
+                    "details": auth_result.get('error'),
+                    "error_type": auth_result.get('error_type'),
+                    "hint": "Check credentials or try with hCaptcha token",
+                    "implementation": "docker_workaround"
+                }, 401
+            
+            account = auth_result['account']
+            
+            # Step 2: Handle different actions
+            if action == "status":
+                if wkn:
+                    # Get specific vehicle status
+                    status_result = await get_vehicle_status_simple(account, wkn)
+                    if status_result['success']:
+                        return {
+                            "success": True,
+                            "action": "status",
+                            "vehicle": status_result['vehicle_status'],
+                            "implementation": "docker_workaround",
+                            "patch_info": get_patch_info()
+                        }, 200
+                    else:
+                        return {
+                            "error": status_result['error'],
+                            "implementation": "docker_workaround"
+                        }, 404
+                else:
+                    # Get all vehicles
+                    vehicles_result = await get_vehicles_simple(account)
+                    if vehicles_result['success']:
+                        return {
+                            "success": True,
+                            "action": "status",
+                            "vehicles": vehicles_result['vehicles'],
+                            "count": vehicles_result['count'],
+                            "implementation": "docker_workaround",
+                            "patch_info": get_patch_info()
+                        }, 200
+                    else:
+                        return {
+                            "error": vehicles_result['error'],
+                            "implementation": "docker_workaround"
+                        }, 500
+            
+            elif action in ["lock", "unlock", "flash", "horn", "climate"]:
+                # Execute remote service
+                service_result = await execute_remote_service_simple(account, wkn, action)
+                
+                if service_result['success']:
+                    return {
+                        "success": True,
+                        "action": action,
+                        "vehicle": wkn,
+                        "message": service_result['message'],
+                        "implementation": "docker_workaround",
+                        "patch_info": get_patch_info()
+                    }, 200
+                else:
+                    return {
+                        "error": service_result['error'],
+                        "action": action,
+                        "vehicle": wkn,
+                        "implementation": "docker_workaround"
+                    }, 500
+            
+            else:
+                return {
+                    "error": f"Unknown action: {action}",
+                    "available_actions": ["status", "lock", "unlock", "flash", "horn", "climate"],
+                    "implementation": "docker_workaround"
+                }, 400
         
-        access_token = auth_result['access_token']
-        print("✅ Authentication successful!")
+        # Run the async process
+        result, status_code = loop.run_until_complete(process_request())
         
-        # Step 2: Get vehicles
-        print("🚗 Step 2: Fetching vehicles...")
-        vehicles_result = loop.run_until_complete(
-            get_vehicles(access_token)
-        )
+        # Add CORS headers to response
+        response = jsonify(result)
+        response.headers["Access-Control-Allow-Origin"] = "*"
         
-        if not vehicles_result.get('success'):
-            return jsonify({
-                "error": "Failed to fetch vehicles",
-                "details": vehicles_result.get('error'),
-                "implementation": "direct_api"
-            }), 500
-        
-        vehicles = vehicles_result.get('vehicles', [])
-        print(f"✅ Found {len(vehicles)} vehicles")
-        
-        # Step 3: Find specific vehicle
-        target_vehicle = None
-        for vehicle in vehicles:
-            if vehicle.get('vin') == wkn:
-                target_vehicle = vehicle
-                break
-        
-        if not target_vehicle:
-            return jsonify({
-                "error": f"Vehicle with WKN '{wkn}' not found",
-                "available_vehicles": [v.get('vin', 'unknown') for v in vehicles],
-                "implementation": "direct_api"
-            }), 404
-        
-        print(f"✅ Found vehicle: {target_vehicle.get('model', 'Unknown')} ({wkn})")
-        
-        # Step 4: Execute action if requested
-        action_result = None
-        if action in ['lock', 'unlock', 'flash', 'climate']:
-            print(f"🔧 Step 4: Executing {action}...")
-            service_result = loop.run_until_complete(
-                execute_remote_service(access_token, wkn, action)
-            )
-            action_result = service_result
-        
-        # Build response
-        response_data = {
-            "success": True,
-            "vehicle": target_vehicle,
-            "action": action,
-            "action_result": action_result,
-            "implementation": "direct_api",
-            "message": "CRITICAL FIX: Using direct BMW API implementation"
-        }
-        
-        headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Content-Type": "application/json"
-        }
-        
-        print("✅ Request completed successfully!")
-        return (jsonify(response_data), 200, headers)
+        return response, status_code
         
     except Exception as e:
+        print(f"❌ Error processing request: {e}")
         import traceback
-        error_message = str(e)
-        print(f"💥 EXTREME DEBUG: Critical error: {error_message}")
-        print(f"🔧 EXTREME DEBUG: Full traceback: {traceback.format_exc()}")
+        traceback.print_exc()
         
         return jsonify({
-            "error": "EXTREME DEBUG: Request processing failed",
-            "details": error_message,
-            "implementation": "direct_api_with_debug",
-            "full_traceback": traceback.format_exc(),
-            "debug_info": "This is our OAuth PKCE implementation with extreme debugging"
+            "error": "Internal server error",
+            "details": str(e),
+            "implementation": "docker_workaround",
+            "patch_applied": patch_success,
+            "message": "UPDATED: Now uses Docker workaround approach"
         }), 500
     
     finally:
-        # Clean up event loop
         try:
             loop.close()
         except:
             pass
+
+
+# Local testing
+if __name__ == "__main__":
+    print("BMW API Stateless - Docker Workaround Mode")
+    print("=" * 50)
+    
+    # Show patch info
+    patch_info = get_patch_info()
+    print(f"Patch info: {patch_info}")
+    
+    print("\n✅ Ready for testing with Docker workaround approach!")
+    print("This now uses bimmer_connected + Android fingerprint patching")
