@@ -74,7 +74,7 @@ jobs:
         cp apis/bmw/src/main_fixed_complete.py deploy_package/main.py
         
         # Also copy the fingerprint patch module
-        cp apis/bmw/src/fingerprint_patch.py deploy_package/
+        cp apis/bmw/src/fingerprint_patch.py deploy_package/fingerprint_patch.py
         
         # Copy requirements
         cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
@@ -187,7 +187,7 @@ jobs:
         cp apis/bmw/src/main_fixed_complete.py deploy_package/main.py
         
         # Also copy the fingerprint patch module
-        cp apis/bmw/src/fingerprint_patch.py deploy_package/
+        cp apis/bmw/src/fingerprint_patch.py deploy_package/fingerprint_patch.py
         
         # Copy requirements
         cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
