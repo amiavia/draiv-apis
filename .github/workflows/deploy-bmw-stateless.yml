@@ -2,7 +2,7 @@ name: Deploy BMW API Stateless
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master, main, develop ]
     paths:
       - 'apis/bmw/src/main_stateless.py'
       - 'apis/bmw/requirements-stateless.txt'
