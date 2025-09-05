@@ -1,24 +1,12 @@
 """
-BMW API Fixed with Dynamic Fingerprint
-=======================================
-Production implementation with PR #743 fingerprint generation
+BMW API with Fingerprint Patch for Quota Isolation
 """
-
-import functions_framework
-from flask import jsonify
-import asyncio
-import aiohttp
-import json
-import hashlib
-import secrets
-import base64
-import platform
-import uuid
-import re
+# CRITICAL: Apply fingerprint patch BEFORE importing bimmer_connected
+import sys
 import os
-from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
-from urllib.parse import urlencode, urlparse, parse_qs
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fingerprint_patch import apply_fingerprint_patch
+apply_fingerprint_patch()
 
 
 def get_system_uuid() -> str:

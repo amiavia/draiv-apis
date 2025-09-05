@@ -5,6 +5,8 @@ on:
     branches: [ master, main, develop ]
     paths:
       - 'apis/bmw/src/main_stateless.py'
+      - 'apis/bmw/src/main_fixed_complete.py'
+      - 'apis/bmw/src/fingerprint_patch.py'
       - 'apis/bmw/requirements-stateless.txt'
       - '.github/workflows/deploy-bmw-stateless.yml'
   workflow_dispatch:
@@ -68,8 +70,11 @@ jobs:
         # Create deployment directory
         mkdir -p deploy_package
         
-        # Copy stateless implementation as main.py
-        cp apis/bmw/src/main_stateless.py deploy_package/main.py
+        # Copy fixed implementation with fingerprint as main.py
+        cp apis/bmw/src/main_fixed_complete.py deploy_package/main.py
+        
+        # Also copy the fingerprint patch module
+        cp apis/bmw/src/fingerprint_patch.py deploy_package/
         
         # Copy requirements
         cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
@@ -178,8 +183,11 @@ jobs:
         # Create deployment directory
         mkdir -p deploy_package
         
-        # Copy stateless implementation as main.py
-        cp apis/bmw/src/main_stateless.py deploy_package/main.py
+        # Copy fixed implementation with fingerprint as main.py
+        cp apis/bmw/src/main_fixed_complete.py deploy_package/main.py
+        
+        # Also copy the fingerprint patch module
+        cp apis/bmw/src/fingerprint_patch.py deploy_package/
         
         # Copy requirements
         cp apis/bmw/requirements-stateless.txt deploy_package/requirements.txt
