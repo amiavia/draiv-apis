@@ -309,7 +309,7 @@ def bmw_api(request):
         health_data = {
             "status": "healthy",
             "service": "bmw-api-stateless",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "implementation": "docker_workaround_with_bimmer_connected",
             "patch_info": patch_info,
             "bimmer_connected_available": MyBMWAccount is not None,

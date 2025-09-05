@@ -101,22 +101,14 @@ jobs:
           echo "✅ Health check passed!"
           
           # Parse and display key info
-          echo "$HEALTH_BODY" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    print(f'🎯 Service: {data.get(\"service\", \"unknown\")}')
-    print(f'📦 Implementation: {data.get(\"implementation\", \"unknown\")}')
-    
-    patch_info = data.get('patch_info', {})
-    if patch_info:
-        print(f'🔧 Generated Fingerprint: {patch_info.get(\"generated_fingerprint\", \"unknown\")}')
-        print(f'🤖 Patch Active: {patch_info.get(\"patch_active\", \"unknown\")}')
-    
-    print(f'📚 bimmer_connected Available: {data.get(\"bimmer_connected_available\", \"unknown\")}')
-except:
-    print('Could not parse health response JSON')
-"
+          echo "🎯 Parsing health response..."
+          echo "$HEALTH_BODY" | jq -r '
+            "🎯 Service: " + (.service // "unknown") + "\n" +
+            "📦 Implementation: " + (.implementation // "unknown") + "\n" +
+            "🔧 Generated Fingerprint: " + (.patch_info.generated_fingerprint // "unknown") + "\n" + 
+            "🤖 Patch Active: " + (.patch_info.patch_active // "unknown" | tostring) + "\n" +
+            "📚 bimmer_connected Available: " + (.bimmer_connected_available // "unknown" | tostring)
+          ' || echo "Could not parse health response JSON"
           
         else
           echo "❌ Health check failed with status $HTTP_CODE"
