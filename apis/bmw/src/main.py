@@ -258,8 +258,27 @@ def bmw_api(request: Request):
             "version": "2.0.0",
             "environment": ENVIRONMENT,
             "metrics": bmw_service.get_metrics(),
-            "monkey_patch": "active"  # Indicate monkey patch is active
+            "monkey_patch": "active",  # Indicate monkey patch is active
+            "fingerprint_info": {}  # Will be populated with PR #743 fingerprint details
         }
+        
+        # Add PR #743 fingerprint information
+        try:
+            from utils.bmw_monkey_patch import _get_system_uuid_pr743, _generate_build_string_pr743
+            system_uuid = _get_system_uuid_pr743()
+            build_string = _generate_build_string_pr743(system_uuid)
+            x_user_agent = f"android({build_string});bmw;2.20.3;row"
+            
+            health_data["fingerprint_info"] = {
+                "system_uuid": system_uuid,
+                "build_string": build_string,
+                "x_user_agent": x_user_agent,
+                "algorithm": "PR_743_with_container_awareness"
+            }
+        except Exception as e:
+            health_data["fingerprint_info"] = {
+                "error": f"Failed to generate fingerprint info: {str(e)}"
+            }
         
         # Add circuit breaker state to health status
         circuit_state = circuit_breaker.state.value

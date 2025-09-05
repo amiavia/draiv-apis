@@ -4,6 +4,8 @@ BMW Monkey Patch for bimmer_connected Library
 This module monkey-patches the bimmer_connected library to fix the BMW API quota issue.
 It implements the fix from PR #743 which generates dynamic x-user-agent headers.
 
+UPDATED: Now uses the exact PR #743 algorithm with container awareness for unique fingerprints.
+
 This MUST be imported BEFORE importing any bimmer_connected modules!
 """
 
@@ -12,6 +14,8 @@ import platform
 import random
 import string
 import uuid
+import os
+import re
 from typing import Optional
 
 def apply_monkey_patch():
@@ -30,16 +34,17 @@ def apply_monkey_patch():
         
         @staticmethod
         def get_x_user_agent():
-            """Generate dynamic x-user-agent to avoid BMW quota blocks"""
-            # Generate a stable but unique identifier for this deployment
-            system_id = _get_system_uuid()
-            build_string = _generate_build_string(system_id)
+            """Generate dynamic x-user-agent using PR #743 algorithm"""
+            # Get stable system UUID with container awareness
+            system_uuid = _get_system_uuid_pr743()
+            build_string = _generate_build_string_pr743(system_uuid)
             
             # Format matching BMW's expected pattern from PR #743
             # Example: "android(LP1A.123456.789);bmw;2.20.3;row"
             x_user_agent = f"android({build_string});bmw;2.20.3;row"
             
-            print(f"🔧 Generated x-user-agent: {x_user_agent}")
+            print(f"🔧 PR #743 x-user-agent: {x_user_agent}")
+            print(f"🔧 System UUID: {system_uuid}")
             return x_user_agent
     
     # Patch the bimmer_connected modules
@@ -117,56 +122,95 @@ def apply_monkey_patch():
         # Continue anyway - partial patching is better than none
 
 
-def _get_system_uuid() -> str:
-    """
-    Get a stable UUID for this system/deployment.
-    This ensures the same UUID is used consistently.
-    """
-    # Try to get a stable identifier
+def _get_container_id() -> str:
+    """Get container ID for additional uniqueness"""
     try:
-        # Use MAC address as a stable identifier
-        mac = uuid.getnode()
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"bmw-{mac}"))
+        with open('/proc/self/cgroup', 'r') as f:
+            for line in f:
+                if 'docker' in line or 'containerd' in line:
+                    return line.split('/')[-1].strip()[:12]
     except:
-        # Fallback to a random but stable UUID (stored in memory)
-        if not hasattr(_get_system_uuid, '_cached_uuid'):
-            _get_system_uuid._cached_uuid = str(uuid.uuid4())
-        return _get_system_uuid._cached_uuid
+        pass
+    return 'default'
 
 
-def _generate_build_string(system_id: str) -> str:
+def _get_system_uuid_pr743() -> str:
     """
-    Generate a build string that looks like Android build numbers.
-    Format: LP1A.123456.789 (based on PR #743 examples)
+    Get stable system UUID for Cloud Functions/Run container using PR #743 approach.
+    This ensures consistent fingerprint across container lifecycle while being unique per deployment.
+    """
+    # For Cloud Functions/Run, use service and revision info for stability
+    service_name = os.environ.get('K_SERVICE', 'bmw-api')
+    revision = os.environ.get('K_REVISION', 'default') 
+    region = os.environ.get('FUNCTION_REGION', 'europe-west6')
+    
+    # Get container ID for additional uniqueness
+    container_id = _get_container_id()
+    
+    # Create stable identifier for this deployment
+    stable_id = f"{service_name}-{revision}-{region}-{container_id}"
+    
+    # Try to get actual system UUID as fallback
+    try:
+        system = platform.system().lower()
+        if system == 'linux':
+            # Try machine-id first (most stable on Linux)
+            try:
+                with open('/etc/machine-id', 'r') as f:
+                    machine_id = f.read().strip()
+                if machine_id:
+                    return f"{machine_id}-{service_name}"
+            except:
+                pass
+                
+        # Fallback to MAC address
+        mac_address = uuid.getnode()
+        if mac_address:
+            return f"{mac_address}-{service_name}"
+            
+    except:
+        pass
+        
+    # Final fallback: use our stable deployment ID
+    return stable_id
+
+
+def _generate_build_string_pr743(system_uuid: str) -> str:
+    """
+    Generate BMW-compatible build string using exact PR #743 algorithm.
+    This replicates the bimmer_connected PR #743 implementation.
     
     Args:
-        system_id: System UUID for generating stable hash
+        system_uuid: System UUID for generating stable hash
         
     Returns:
-        Build string in Android format
+        Build string in format: LP1A.123456.789
     """
-    # Create a hash from the system ID for stability
-    hash_obj = hashlib.sha256(system_id.encode())
-    hash_hex = hash_obj.hexdigest()
+    # Use SHA1 (BMW standard, not SHA256) as per PR #743
+    digest = hashlib.sha1(system_uuid.encode()).hexdigest().upper()
     
-    # Generate components from the hash
-    # Prefix: 2-4 letters (like LP1A, RP1A, etc.)
-    prefix_chars = ''.join([
-        hash_hex[0].upper() if hash_hex[0].isalpha() else 'L',
-        hash_hex[1].upper() if hash_hex[1].isalpha() else 'P',
-        '1',
-        hash_hex[2].upper() if hash_hex[2].isalpha() else 'A'
-    ])
+    # Extract numeric digits from hash (PR #743 method)
+    numeric_chars = re.findall(r'\d', digest)
+    if len(numeric_chars) < 9:
+        # Pad with zeros if not enough digits
+        numeric_chars.extend(['0'] * (9 - len(numeric_chars)))
     
-    # Middle number: 6 digits
-    middle_num = int(hash_hex[3:9], 16) % 1000000
-    middle_str = f"{middle_num:06d}"
+    # Create build string components
+    middle_part = ''.join(numeric_chars[:6])
+    build_part = ''.join(numeric_chars[6:9])
     
-    # End number: 3 digits
-    end_num = int(hash_hex[9:12], 16) % 1000
-    end_str = f"{end_num:03d}"
+    # Platform-specific prefix (PR #743 approach)
+    system = platform.system().lower()
+    if system == 'linux':
+        prefix = 'LP1A'  # Linux Platform 1A
+    elif system == 'darwin':  # macOS
+        prefix = 'DP1A'  # Darwin Platform 1A
+    elif system == 'windows':
+        prefix = 'WP1A'  # Windows Platform 1A
+    else:
+        prefix = 'AP1A'  # Android Platform 1A (default)
     
-    build_string = f"{prefix_chars}.{middle_str}.{end_str}"
+    build_string = f"{prefix}.{middle_part}.{build_part}"
     return build_string
 
 
