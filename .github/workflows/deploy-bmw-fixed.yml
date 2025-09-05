@@ -33,6 +33,7 @@ jobs:
     - name: Deploy Fixed BMW API
       run: |
         gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --gen2 \
           --runtime ${{ env.RUNTIME }} \
           --trigger-http \
           --allow-unauthenticated \
@@ -40,9 +41,10 @@ jobs:
           --source apis/bmw/src \
           --region ${{ env.REGION }} \
           --project ${{ env.GCP_PROJECT }} \
-          --timeout 120 \
-          --memory 256MB \
-          --set-env-vars ENVIRONMENT=production
+          --timeout 300s \
+          --memory 512MB \
+          --max-instances 100 \
+          --set-env-vars ENVIRONMENT=production,K_SERVICE=${{ env.FUNCTION_NAME }}
     
     - name: Get Function URL
       run: |
