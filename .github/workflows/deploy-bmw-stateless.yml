@@ -138,7 +138,7 @@ jobs:
   deploy-production:
     needs: validate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     environment:
       name: production
       url: https://europe-west6-miavia-422212.cloudfunctions.net/bmw_api_stateless
