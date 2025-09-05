@@ -18,10 +18,9 @@ import secrets
 import base64
 import re
 
-# BMW API Configuration
-BMW_BASE_URL = "https://customer.bmwgroup.com"
-BMW_AUTH_URL = f"{BMW_BASE_URL}/gcdm/oauth"
-BMW_VEHICLES_URL = f"{BMW_BASE_URL}/api/me/vehicles/v2"
+# BMW API Configuration - Updated to match bimmer_connected implementation
+BMW_SERVER_URL = "https://cocoapi.bmwgroup.com"  # Rest of World server
+OAUTH_CONFIG_PATH = "/eadrax-ucs/v1/presentation/oauth/config"
 BMW_CLIENT_ID = "dbf0a542-ebd1-4ff0-a9a7-55172fbfce35"
 
 def _get_system_uuid() -> str:
@@ -117,7 +116,7 @@ async def get_oauth_settings() -> Dict[str, Any]:
         'user-agent': 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36'
     }
     
-    oauth_config_url = f"{BMW_BASE_URL}/gcdm/oauth/config"
+    oauth_config_url = f"{BMW_SERVER_URL}{OAUTH_CONFIG_PATH}"
     
     async with aiohttp.ClientSession() as session:
         async with session.get(oauth_config_url, headers=headers) as response:
@@ -282,10 +281,12 @@ async def get_vehicles(access_token: str) -> Dict[str, Any]:
         'accept': 'application/json'
     }
     
+    vehicles_url = f"{BMW_SERVER_URL}/eadrax-vcs/v5/vehicle-list"
+    
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(
-                BMW_VEHICLES_URL,
+                vehicles_url,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
@@ -316,7 +317,16 @@ async def execute_remote_service(access_token: str, vin: str, service: str) -> D
     }
     
     service_endpoint = service_map.get(service, service)
-    url = f"{BMW_BASE_URL}/api/vehicle/remoteservices/v1/{vin}/{service_endpoint}"
+    # Map our service endpoints to BMW's remote command types
+    service_map = {
+        'lock': 'door-lock',
+        'unlock': 'door-unlock',
+        'flash': 'light-flash',
+        'honk': 'horn-blow',
+        'climate': 'climate-now'
+    }
+    service_type = service_map.get(service_endpoint, service_endpoint)
+    url = f"{BMW_SERVER_URL}/eadrax-vrccs/v4/presentation/remote-commands/{service_type}"
     
     headers = {
         'authorization': f'Bearer {access_token}',
